@@ -503,7 +503,7 @@ class Assistant(Agent):
 
                 ## F. Available buddywser Functions
 
-                - Use open_website to open websites directly.
+                - Use open_website to open websites directly. It opens the page on the device the user is speaking from, so his phone or tablet shows the page, not the computer running you.
                 - Use inspect_page to inspect the current website.
                 - Use read_page to read webpage content.
                 - Use click_element to click website controls.
@@ -708,18 +708,62 @@ class Assistant(Agent):
             "buddywser": buddywser_result,
         }
 
-    @function_tool()
-    async def open_website(self, context: RunContext, url: str):
-        """Open a website in the visible buddywser.
+    async def _open_on_client(self, context: RunContext, url: str) -> bool:
+        """Ask the device the user is speaking from to open ``url`` itself.
 
-        Use when the user asks to open a website directly.
+        The agent runs on the user's computer, so a browser driven from here
+        always lands on that computer. A phone talking to us expects its own
+        browser to open, so the request is handed to the linked client over RPC
+        and it launches the URL locally.
+
+        Returns True only when the client acknowledged the request; callers fall
+        back to the local browser otherwise.
         """
         try:
-            url = url.strip()
+            io = context.session.room_io
+        except RuntimeError:
+            return False
 
-            if not url.startswith(("https://", "http://")):
-                url = "https://" + url
+        linked = io.linked_participant
+        if linked is None:
+            return False
 
+        try:
+            await io.room.local_participant.perform_rpc(
+                destination_identity=linked.identity,
+                method="open_url",
+                payload=url,
+                response_timeout=5.0,
+            )
+        except Exception as exc:
+            logger.info("Client %s could not open %s: %s", linked.identity, url, exc)
+            return False
+
+        return True
+
+    @function_tool()
+    async def open_website(self, context: RunContext, url: str):
+        """Open a website on the user's own device.
+
+        Use when the user asks to open a website directly, for example
+        "open youtube". The page opens on whatever device the user is speaking
+        from, not on the computer running the agent.
+        """
+        url = url.strip()
+
+        if not url.startswith(("https://", "http://")):
+            url = "https://" + url
+
+        if await self._open_on_client(context, url):
+            return {
+                "success": True,
+                "message": "Website opened on the user's device.",
+                "url": url,
+            }
+
+        # The client does not handle open_url (the web frontend, for example),
+        # so drive a browser here instead of failing the request.
+        try:
             result = await self.browser.open_url(url)
             return {
                 "success": True,
