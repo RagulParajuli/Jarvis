@@ -1,30 +1,21 @@
 'use client';
 
-import { useTheme } from 'next-themes';
-import { AnimatePresence, motion } from 'motion/react';
-import { useAgent, useSessionContext } from '@livekit/components-react';
-import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01';
+import { HudSessionView } from '@/components/app/hud-session-view';
 import { WelcomeView } from '@/components/app/welcome-view';
+import { useAgent, useSessionContext } from '@livekit/components-react';
+import { AnimatePresence, motion } from 'motion/react';
 
 const MotionWelcomeView = motion.create(WelcomeView);
-const MotionSessionView = motion.create(AgentSessionView_01);
 
 const VIEW_MOTION_PROPS = {
   variants: {
-    visible: {
-      opacity: 1,
-    },
-    hidden: {
-      opacity: 0,
-    },
+    visible: { opacity: 1 },
+    hidden:  { opacity: 0 },
   },
   initial: 'hidden',
   animate: 'visible',
-  exit: 'hidden',
-  transition: {
-    duration: 0.5,
-    ease: 'linear',
-  },
+  exit:    'hidden',
+  transition: { duration: 0.5, ease: 'linear' },
 };
 
 interface ViewControllerProps {
@@ -34,34 +25,32 @@ interface ViewControllerProps {
 export function ViewController({ isVideoInputSupported }: ViewControllerProps) {
   const { isConnected, start } = useSessionContext();
   const agent = useAgent();
-  const { resolvedTheme } = useTheme();
 
   return (
     <AnimatePresence mode="wait">
-      {/* Welcome view */}
       {!isConnected && (
         <MotionWelcomeView
           key="welcome"
           {...VIEW_MOTION_PROPS}
-          startButtonText="Start call"
+          startButtonText="Activate Jarvis"
           onStartCall={start}
         />
       )}
-      {/* Session view */}
+
       {isConnected && (
-        <MotionSessionView
-          key="session-view"
+        <motion.div
+          key="session"
           {...VIEW_MOTION_PROPS}
-          preConnectMessage={
-            agent.isConnected ? 'Agent is listening, ask it a question' : 'Waiting for agent'
-          }
-          supportsChatInput={true}
-          supportsVideoInput={isVideoInputSupported}
-          supportsScreenShare={isVideoInputSupported}
-          isPreConnectBufferEnabled={true}
-          themeMode={resolvedTheme === 'dark' ? 'dark' : 'light'}
           className="fixed inset-0"
-        />
+        >
+          <HudSessionView
+            preConnectMessage={
+              agent.isConnected ? 'JARVIS IS LISTENING' : 'ESTABLISHING NEURAL LINK...'
+            }
+            supportsVideoInput={isVideoInputSupported}
+            supportsScreenShare={isVideoInputSupported}
+          />
+        </motion.div>
       )}
     </AnimatePresence>
   );

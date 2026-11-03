@@ -4,123 +4,219 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ─── JARVIS HUD PALETTE ─────────────────────────────────────────────────── */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: #002cf2;
-  --primary-hover: color-mix(in srgb, #002cf2 80%, #000);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --hud-bg:        #06090d;
+  --hud-surface:   #0b1119;
+  --hud-cyan:      #00e5ff;
+  --hud-cyan-dim:  rgba(0, 229, 255, 0.15);
+  --hud-cyan-glow: rgba(0, 229, 255, 0.35);
+  --hud-amber:     #ffb300;
+  --hud-amber-dim: rgba(255, 179, 0, 0.18);
+  --hud-red:       #ff3b3b;
+  --hud-border:    rgba(0, 229, 255, 0.22);
+  --hud-text:      #b0e4f0;
+  --hud-text-dim:  rgba(176, 228, 240, 0.45);
+  --radius: 0;
+
+  /* map shadcn tokens to HUD palette */
+  --background:          var(--hud-bg);
+  --foreground:          var(--hud-text);
+  --card:                var(--hud-surface);
+  --card-foreground:     var(--hud-text);
+  --popover:             var(--hud-surface);
+  --popover-foreground:  var(--hud-text);
+  --primary:             var(--hud-cyan);
+  --primary-hover:       color-mix(in srgb, var(--hud-cyan) 75%, #000);
+  --primary-foreground:  #06090d;
+  --secondary:           #0d1a24;
+  --secondary-foreground:var(--hud-text);
+  --muted:               #0d1a24;
+  --muted-foreground:    var(--hud-text-dim);
+  --accent:              var(--hud-cyan-dim);
+  --accent-foreground:   var(--hud-cyan);
+  --destructive:         var(--hud-red);
+  --border:              var(--hud-border);
+  --input:               rgba(0, 229, 255, 0.1);
+  --ring:                var(--hud-cyan);
 }
 
+/* force dark — Jarvis is dark-only */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.269 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: #1fd5f9;
-  --primary-hover: color-mix(in srgb, #1fd5f9 80%, #000);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.371 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.439 0 0);
+  --background:          var(--hud-bg);
+  --foreground:          var(--hud-text);
+  --card:                var(--hud-surface);
+  --card-foreground:     var(--hud-text);
+  --popover:             var(--hud-surface);
+  --popover-foreground:  var(--hud-text);
+  --primary:             var(--hud-cyan);
+  --primary-hover:       color-mix(in srgb, var(--hud-cyan) 75%, #000);
+  --primary-foreground:  #06090d;
+  --secondary:           #0d1a24;
+  --secondary-foreground:var(--hud-text);
+  --muted:               #0d1a24;
+  --muted-foreground:    var(--hud-text-dim);
+  --accent:              var(--hud-cyan-dim);
+  --accent-foreground:   var(--hud-cyan);
+  --destructive:         var(--hud-red);
+  --border:              var(--hud-border);
+  --input:               rgba(0, 229, 255, 0.1);
+  --ring:                var(--hud-cyan);
 }
 
 @theme inline {
-  --font-sans:
-    var(--font-public-sans), ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
-    'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-  --font-mono:
-    var(--font-commit-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', 'Courier New', monospace;
+  --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-commit-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, 'Liberation Mono', 'Courier New', monospace;
 
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
+  --color-background:             var(--background);
+  --color-foreground:             var(--foreground);
+  --color-card:                   var(--card);
+  --color-card-foreground:        var(--card-foreground);
+  --color-popover:                var(--popover);
+  --color-popover-foreground:     var(--popover-foreground);
+  --color-primary:                var(--primary);
+  --color-primary-foreground:     var(--primary-foreground);
+  --color-secondary:              var(--secondary);
+  --color-secondary-foreground:   var(--secondary-foreground);
+  --color-muted:                  var(--muted);
+  --color-muted-foreground:       var(--muted-foreground);
+  --color-accent:                 var(--accent);
+  --color-accent-foreground:      var(--accent-foreground);
+  --color-destructive:            var(--destructive);
+  --color-border:                 var(--border);
+  --color-input:                  var(--input);
+  --color-ring:                   var(--ring);
 }
 
 @layer base {
   * {
     @apply border-foreground/20 outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
+  html, body {
+    background-color: var(--hud-bg);
+    color: var(--hud-text);
+    font-family: var(--font-mono), monospace;
+    @apply antialiased;
   }
+}
+
+/* ─── HUD PANEL — hairline border + 45° chamfer corners ─────────────────── */
+.hud-panel {
+  position: relative;
+  background: var(--hud-surface);
+  border: 1px solid var(--hud-border);
+  clip-path: polygon(
+    12px 0%, calc(100% - 12px) 0%,
+    100% 12px, 100% calc(100% - 12px),
+    calc(100% - 12px) 100%, 12px 100%,
+    0% calc(100% - 12px), 0% 12px
+  );
+}
+
+/* corner bracket decoration */
+.hud-panel::before,
+.hud-panel::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: var(--hud-cyan);
+  border-style: solid;
+  opacity: 0.7;
+}
+.hud-panel::before {
+  top: 4px; left: 4px;
+  border-width: 1px 0 0 1px;
+}
+.hud-panel::after {
+  bottom: 4px; right: 4px;
+  border-width: 0 1px 1px 0;
+}
+
+/* ─── HUD SCANLINE overlay ───────────────────────────────────────────────── */
+.hud-scanlines {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 3px,
+    rgba(0, 229, 255, 0.012) 3px,
+    rgba(0, 229, 255, 0.012) 4px
+  );
+}
+
+/* ─── CYAN GLOW text ─────────────────────────────────────────────────────── */
+.hud-glow {
+  color: var(--hud-cyan);
+  text-shadow: 0 0 8px var(--hud-cyan-glow), 0 0 20px rgba(0, 229, 255, 0.15);
+}
+
+/* ─── STATUS LABEL ───────────────────────────────────────────────────────── */
+.hud-label {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hud-text-dim);
+}
+
+/* ─── BOOT-UP ANIMATION ──────────────────────────────────────────────────── */
+@keyframes hud-boot {
+  0%   { opacity: 0; transform: scaleX(0.92) scaleY(0.96); }
+  60%  { opacity: 1; transform: scaleX(1.01) scaleY(1); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.hud-boot {
+  animation: hud-boot 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ─── SHIMMER (pre-connect message) ─────────────────────────────────────── */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--hud-text-dim) 25%,
+    var(--hud-cyan) 50%,
+    var(--hud-text-dim) 75%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.shimmer-duration-2000 {
+  animation: shimmer-move 2s linear infinite;
+}
+@keyframes shimmer-move {
+  to { background-position: 200% center; }
+}
+
+/* ─── GRID LINES background ─────────────────────────────────────────────── */
+.hud-grid-bg {
+  background-image:
+    linear-gradient(var(--hud-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hud-border) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ─── TRANSCRIPT PANEL ───────────────────────────────────────────────────── */
+.hud-transcript {
+  background: rgba(6, 9, 13, 0.92);
+  border: 1px solid var(--hud-border);
+  border-top: 2px solid var(--hud-cyan);
+}
+
+/* ─── SCROLLBAR ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hud-border); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: var(--hud-cyan); }
+
+/* ─── BUTTON overrides ───────────────────────────────────────────────────── */
+button, [role="button"] {
+  font-family: var(--font-mono), monospace;
+  letter-spacing: 0.1em;
 }
