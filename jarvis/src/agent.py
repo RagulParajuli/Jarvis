@@ -426,7 +426,7 @@ class Assistant(Agent):
                 ## A. Direct Website Navigation
 
                 - If the user names a website, service, or domain, open its official URL directly using the available browser navigation capability.
-                - Do not send requests through DuckDuckGo when the user has explicitly named a destination.
+                - Do not send requests through Brave Search when the user has explicitly named a destination.
                 - Examples include Google, YouTube, Amazon, Gmail, Reddit, and Wikipedia.
                 - If the user provides a specific domain or URL, use that destination directly.
                 - If the requested website is already open, inspect and interact with the current page instead of unnecessarily navigating elsewhere.
@@ -440,7 +440,7 @@ class Assistant(Agent):
                 ## C. General Internet Search
 
                 - Only use search_the_web when no website, service, domain, or current destination is specified and a general internet lookup is needed.
-                - General internet searches should use DuckDuckGo through the agent-controlled browser.
+                - General internet searches should use Brave Search through the agent-controlled browser, with automatic fallback to DuckDuckGo if Brave Search fails.
                 - After search_the_web, use inspect_page or read_page to read the search results before answering.
                 - Open a result when the search page does not provide enough detail.
                 - Summarise search results and mention uncertainty when sources conflict or do not clearly answer the request.
@@ -571,33 +571,55 @@ class Assistant(Agent):
     async def search_and_browse(self, context: RunContext, query: str):
         """Search the web for a query and open the results in the visible browser.
 
-        Use when the user asks to search for something online. Returns text results
-        from the search and also opens DuckDuckGo in the browser so the user can
-        see the results visually.
+        Tries Brave Search first. If Brave Search fails or returns no useful
+        content, automatically falls back to DuckDuckGo to complete the search.
 
         Args:
             query: The search query to look up.
         """
         import urllib.parse
 
-        text_results = ""
-        try:
-            text_results = DuckDuckGoSearchRun().run(tool_input=query)
-            logging.info(f"Web search for '{query}': {text_results}")
-        except Exception as e:
-            logging.error(f"DuckDuckGo text search failed for '{query}': {e}")
-            text_results = f"Text search unavailable: {e}"
+        encoded = urllib.parse.quote_plus(query)
+        brave_url = f"https://search.brave.com/search?q={encoded}"
+        ddg_url = f"https://duckduckgo.com/?q={encoded}"
 
-        # Open DuckDuckGo in the visible browser so the user can see results
-        search_url = f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}"
+        text_results = ""
         browser_result = {}
+        source_used = ""
+
+        # --- Try Brave Search first ---
         try:
-            browser_result = await self.browser.open_url(search_url)
+            browser_result = await self.browser.open_url(brave_url)
+            page_data = await self.browser.read_page(max_chars=6000)
+            text_results = page_data.get("text", "").strip()
+            if text_results:
+                source_used = "Brave Search"
+                logging.info(f"Brave Search for '{query}': fetched {len(text_results)} chars")
+            else:
+                raise ValueError("Brave Search returned empty content")
         except Exception as e:
-            browser_result = {"error": str(e)}
+            logging.warning(f"Brave Search failed for '{query}': {e} — falling back to DuckDuckGo")
+
+        # --- Fall back to DuckDuckGo if Brave failed or returned nothing ---
+        if not text_results:
+            try:
+                browser_result = await self.browser.open_url(ddg_url)
+                # Try reading from the browser first
+                page_data = await self.browser.read_page(max_chars=6000)
+                text_results = page_data.get("text", "").strip()
+                if not text_results:
+                    # Last resort: use DuckDuckGo's text API directly
+                    text_results = DuckDuckGoSearchRun().run(tool_input=query)
+                source_used = "DuckDuckGo"
+                logging.info(f"DuckDuckGo fallback for '{query}': fetched {len(text_results)} chars")
+            except Exception as e:
+                logging.error(f"DuckDuckGo fallback also failed for '{query}': {e}")
+                text_results = f"Both Brave Search and DuckDuckGo were unavailable: {e}"
+                source_used = "none"
 
         return {
             "text_results": text_results,
+            "source": source_used,
             "browser": browser_result,
         }
 
@@ -717,9 +739,6 @@ async def my_agent(ctx: JobContext):
 
     # Connect agent to LiveKit room
     await ctx.connect()
-
-    # Pre-warm the browser so it's ready before the first tool call
-    await assistant.browser.start()
 
     # Start Jarvis voice session
     await session.start(

@@ -143,6 +143,12 @@ async def _bring_page_window_to_front(page: Page) -> None:
 class BrowserManager:
     """Own one isolated, visible browser for a LiveKit room."""
 
+    # Common Brave install paths on Windows
+    _BRAVE_PATHS = [
+        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+    ]
+
     def __init__(self, *, headless: bool = False, timeout_ms: int = 15_000) -> None:
         self._headless = headless
         self._timeout_ms = timeout_ms
@@ -152,38 +158,71 @@ class BrowserManager:
         self._page: Page | None = None
         self._lock = asyncio.Lock()
 
+    def _find_brave(self) -> str | None:
+        """Return the Brave executable path if installed, else None."""
+        import os
+        for path in self._BRAVE_PATHS:
+            if os.path.isfile(path):
+                return path
+        return None
+
     async def start(self) -> None:
         if self._page is not None:
             return
 
-        self._playwright = await async_playwright().start()
-        # Use installed Google Chrome for faster startup and rendering.
-        # Falls back to bundled Chromium automatically if Chrome is not found.
-        try:
+        if self._playwright is None:
+            self._playwright = await async_playwright().start()
+
+        brave_path = self._find_brave()
+        launch_args = [
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--disable-translate",
+            "--disable-features=TranslateUI",
+        ]
+
+        if brave_path:
+            # Launch Brave using its executable path
             self._browser = await self._playwright.chromium.launch(
-                channel="chrome",
+                executable_path=brave_path,
                 headless=self._headless,
-                args=[
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--disable-sync",
-                    "--disable-translate",
-                    "--disable-features=TranslateUI",
-                ],
+                args=launch_args,
             )
-        except Exception:
-            # Chrome not installed — fall back to bundled Chromium
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._headless,
-            )
+        else:
+            # Brave not found — fall back to installed Chrome, then bundled Chromium
+            try:
+                self._browser = await self._playwright.chromium.launch(
+                    channel="chrome",
+                    headless=self._headless,
+                    args=launch_args,
+                )
+            except Exception:
+                self._browser = await self._playwright.chromium.launch(
+                    headless=self._headless,
+                )
+
         self._context = await self._browser.new_context()
         self._page = await self._context.new_page()
         self._page.set_default_timeout(self._timeout_ms)
+
+        # Detect if the user closes the window manually so we can recover
+        self._page.on("close", self._on_page_closed)
+
         if not self._headless:
             await _bring_page_window_to_front(self._page)
 
+    def _on_page_closed(self, *_) -> None:
+        """Called when the browser window is closed by the user."""
+        self._page = None
+        self._context = None
+        self._browser = None
+
     async def close(self) -> None:
         async with self._lock:
+            if self._page is not None:
+                with contextlib.suppress(Exception):
+                    self._page.remove_listener("close", self._on_page_closed)
             if self._context is not None:
                 await self._context.close()
             if self._browser is not None:
@@ -364,6 +403,7 @@ class BrowserManager:
 
     async def _get_page(self) -> Page:
         if self._page is None:
+            # Either first use, or user closed the window — (re)start the browser
             await self.start()
         assert self._page is not None
         return self._page
