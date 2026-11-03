@@ -6,17 +6,25 @@ import re
 import sys
 import time
 import uuid
-from typing import Literal
+from typing import ClassVar, Literal
 from urllib.parse import urlparse
 
-from playwright.async_api import (
-    Locator,
-    Page,
-    async_playwright,
-)
-from playwright.async_api import (
-    TimeoutError as PlaywrightTimeoutError,
-)
+try:
+    from playwright.async_api import (
+        Locator,
+        Page,
+        async_playwright,
+    )
+    from playwright.async_api import (
+        TimeoutError as PlaywrightTimeoutError,
+    )
+
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:  # Playwright is optional; the agent still runs without it.
+    PLAYWRIGHT_AVAILABLE = False
+
+    class PlaywrightTimeoutError(Exception):
+        """Fallback so ``except PlaywrightTimeoutError`` stays valid."""
 
 
 class BrowserError(Exception):
@@ -144,7 +152,7 @@ class BrowserManager:
     """Own one isolated, visible browser for a LiveKit room."""
 
     # Common Brave install paths on Windows
-    _BRAVE_PATHS = [
+    _BRAVE_PATHS: ClassVar[list[str]] = [
         r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
         r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
     ]
@@ -169,6 +177,12 @@ class BrowserManager:
     async def start(self) -> None:
         if self._page is not None:
             return
+
+        if not PLAYWRIGHT_AVAILABLE:
+            raise BrowserError(
+                "Browser automation is unavailable. Install it with "
+                "`pip install playwright` then run `playwright install`."
+            )
 
         if self._playwright is None:
             self._playwright = await async_playwright().start()

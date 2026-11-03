@@ -4,6 +4,7 @@ import { HudSessionView } from '@/components/app/hud-session-view';
 import { WelcomeView } from '@/components/app/welcome-view';
 import { useAgent, useSessionContext } from '@livekit/components-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useEffect, useRef } from 'react';
 
 const MotionWelcomeView = motion.create(WelcomeView);
 
@@ -25,6 +26,29 @@ interface ViewControllerProps {
 export function ViewController({ isVideoInputSupported }: ViewControllerProps) {
   const { isConnected, start } = useSessionContext();
   const agent = useAgent();
+
+  // Keep the latest `start` without retriggering the effect below.
+  const startRef = useRef(start);
+  useEffect(() => {
+    startRef.current = start;
+  }, [start]);
+
+  // Hands-free operation: connect on its own so the user only has to speak
+  // ("Jarvis") and never has to press a button. Attempted once per page load.
+  const autoStartAttempted = useRef(false);
+  useEffect(() => {
+    if (autoStartAttempted.current) return;
+    autoStartAttempted.current = true;
+
+    const timer = window.setTimeout(() => {
+      startRef.current?.().catch(() => {
+        // Autoplay or microphone permission may block this; the welcome
+        // screen's button stays available as a manual fallback.
+      });
+    }, 1600);
+
+    return () => window.clearTimeout(timer);
+  }, []);
 
   return (
     <AnimatePresence mode="wait">

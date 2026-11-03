@@ -11,10 +11,12 @@ const BOOT_LINES = [
   'JARVIS v4.2.1 — INITIALIZING...',
   'Neural link: STANDBY',
   'Voice recognition: READY',
+  'Wake word: "JARVIS"',
   'Browser interface: ACTIVE',
-  'Search engine: BRAVE + DUCKDUCKGO',
+  'Search engine: DUCKDUCKGO',
+  'Local PC access: READY',
   'All systems nominal.',
-  '> Awaiting activation...',
+  '> Awaiting your voice...',
 ];
 
 export const WelcomeView = ({
@@ -110,7 +112,18 @@ export const WelcomeView = ({
         </div>
       </div>
 
-      {/* Activate button */}
+      {/* Voice-first activation hint */}
+      <p
+        className="hud-label mb-4 text-center"
+        style={{
+          color: ready ? 'var(--hud-cyan)' : 'var(--hud-text-dim)',
+          textShadow: ready ? '0 0 12px var(--hud-cyan-glow)' : 'none',
+        }}
+      >
+        {ready ? 'SAY "JARVIS" TO ACTIVATE — NO BUTTON NEEDED' : 'INITIALIZING...'}
+      </p>
+
+      {/* Manual fallback in case the browser blocks the automatic connection */}
       <button
         onClick={onStartCall}
         disabled={!ready}

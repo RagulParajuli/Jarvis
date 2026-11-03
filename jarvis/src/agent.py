@@ -1,29 +1,48 @@
+import asyncio
 import logging
 import textwrap
 
 from dotenv import load_dotenv
+from langchain_community.tools import DuckDuckGoSearchRun
 from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
     JobContext,
     RunContext,
-    function_tool,
     cli,
+    function_tool,
     room_io,
 )
 from livekit.plugins import ai_coustics, google
-from langchain_community.tools import DuckDuckGoSearchRun
-from buddywser import buddywserManager
+
+import pc
+from browser import BrowserError, BrowserManager
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
 
+def _search_internet_sync(query: str, *, max_results: int = 6) -> dict[str, object]:
+    """Run a DuckDuckGo text search and return compact, spoken-friendly results."""
+    from ddgs import DDGS
+
+    raw = DDGS().text(query, max_results=max_results) or []
+    results = [
+        {
+            "title": item.get("title", "").strip(),
+            "url": item.get("href", "").strip(),
+            "snippet": item.get("body", "").strip(),
+        }
+        for item in raw
+    ]
+    return {"online": True, "query": query, "results": results}
+
+
 class Assistant(Agent):
     def __init__(self) -> None:
-        self.buddywser = buddywserManager(
+        self.browser = BrowserManager(
             headless=False,
             timeout_ms=8000
         )
@@ -44,7 +63,7 @@ class Assistant(Agent):
             #    llm="openai/gpt-live-1",
             instructions=textwrap.dedent(
             """
-            # JARVIS – PERSONAL AI ASSISTANT
+            # JARVIS - PERSONAL AI ASSISTANT
 
                 You are Jarvis, an intelligent, reliable, witty, and capable personal AI assistant inspired by the sophisticated technology and personality of Jarvis from Iron Man.
 
@@ -460,10 +479,9 @@ class Assistant(Agent):
 
                 ## C. General Internet Search
 
-                - Only use search_the_web when no website, service, domain, or current destination is specified and a general internet lookup is needed.
-                - General internet searches should use Brave Search through the agent-controlled buddywser, with automatic fallback to DuckDuckGo if Brave Search fails.
-                - After search_the_web, use inspect_page or read_page to read the search results before answering.
-                - Open a result when the search page does not provide enough detail.
+                - Only use search_internet when no website, service, domain, or current destination is specified and a general internet lookup is needed.
+                - search_internet searches with DuckDuckGo and returns the top results directly. Use the browser tools when the user wants a search performed visibly on a specific website.
+                - After search_internet, read the returned results and answer from them. Open a result with the browser tools when the snippets do not provide enough detail.
                 - Summarise search results and mention uncertainty when sources conflict or do not clearly answer the request.
 
                 ## D. Weather Searches
@@ -567,6 +585,52 @@ class Assistant(Agent):
                 The ultimate goal is simple:
 
                 The user should feel like they are talking to a close, intelligent friend who also happens to be an exceptionally capable personal AI assistant.
+
+                # 15. Online and Offline Operation
+
+                Adapt to the current network state instead of assuming the internet is always available.
+
+                ## A. Detecting Connectivity
+
+                - Call check_connection before any task that depends on the internet when the network state is unknown.
+                - When online, use search_internet and the browser tools for web tasks.
+                - When offline, do not attempt internet actions. Use the local PC tools instead and tell the user you are working offline.
+
+                ## B. Online: Internet Search
+
+                - Use search_internet to look things up on the internet and summarise the results in your own words, like a friend explaining what he found.
+                - Use search_internet for quick factual lookups, news, weather and general questions.
+                - Use the browser tools when the user wants a page opened or interacted with, or when a result needs to be read in more detail.
+                - Mention where the information came from when it matters, and say when the answer is uncertain or sources disagree.
+                - Never invent search results.
+
+                ## C. Offline: Local PC Control
+
+                When the computer is offline, or when the user asks about things on his own machine, use the local tools.
+
+                - Use find_local_files to locate saved files by name on any drive, including downloaded movies and music.
+                - Use open_local_file with the full path returned by find_local_files to play or open the file the user asked for.
+                - Use list_drives to report which drives exist and how much space is free.
+                - Use set_wifi to turn Wi-Fi on or off, and set_bluetooth to turn Bluetooth on or off.
+                - Toggling Wi-Fi or Bluetooth needs administrator rights. If the tool reports that it failed, tell the user plainly that it needs administrator permission and never pretend the toggle worked.
+                - When several files match, confirm with the user which one he means before opening it if the choice is genuinely unclear.
+
+                ## D. Honesty About Results
+
+                - Never claim an action was completed unless the tool confirmed success.
+                - If a tool returns an error, explain it once, casually, and suggest a practical alternative.
+                - If a capability is unavailable, say so plainly instead of stalling.
+
+                # 16. Voice-First Activation and Wake Word
+
+                The user talks to you by voice and expects hands-free operation. He does not want to click, tap, or press any button to reach you.
+
+                - Treat "Jarvis" as your wake word.
+                - If the session is already connected, only respond when the user addresses you by name, for example "Jarvis, play something" or "Hey Jarvis".
+                - If the user is clearly continuing an ongoing conversation with you, continue it without requiring the wake word again.
+                - When you hear ambient talk, background conversation, television, music, or speech that is not directed at you, stay silent and take no action.
+                - When the user simply says "Jarvis" to get your attention, acknowledge briefly in your usual friendly style and wait for the instruction.
+                - Never tell the user to press a button or open a menu to talk to you. His voice is always enough.
                 """
             ),
         )
@@ -587,7 +651,7 @@ class Assistant(Agent):
     #     logger.info(f"Looking up weather for {location}")
     #
     #     return "sunny with a temperature of 70 degrees."
- 
+
     @function_tool()
     async def search_and_buddywse(self, context: RunContext, query: str):
         """Search the web for a query and open the results in the visible buddywser.
@@ -610,8 +674,8 @@ class Assistant(Agent):
 
         # --- Try Brave Search first ---
         try:
-            buddywser_result = await self.buddywser.open_url(brave_url)
-            page_data = await self.buddywser.read_page(max_chars=6000)
+            buddywser_result = await self.browser.open_url(brave_url)
+            page_data = await self.browser.read_page(max_chars=6000)
             text_results = page_data.get("text", "").strip()
             if text_results:
                 source_used = "Brave Search"
@@ -624,9 +688,9 @@ class Assistant(Agent):
         # --- Fall back to DuckDuckGo if Brave failed or returned nothing ---
         if not text_results:
             try:
-                buddywser_result = await self.buddywser.open_url(ddg_url)
+                buddywser_result = await self.browser.open_url(ddg_url)
                 # Try reading from the buddywser first
-                page_data = await self.buddywser.read_page(max_chars=6000)
+                page_data = await self.browser.read_page(max_chars=6000)
                 text_results = page_data.get("text", "").strip()
                 if not text_results:
                     # Last resort: use DuckDuckGo's text API directly
@@ -656,37 +720,37 @@ class Assistant(Agent):
             if not url.startswith(("https://", "http://")):
                 url = "https://" + url
 
-            result = await self.buddywser.open_url(url)
+            result = await self.browser.open_url(url)
             return {
                 "success": True,
                 "message": "Website opened successfully.",
                 **result,
             }
-        except buddywserError as e:
+        except BrowserError as e:
             return {"success": False, "error": str(e)}
 
     @function_tool()
     async def inspect_page(self, context: RunContext):
         """Inspect the currently open website and its interactive elements."""
         try:
-            return await self.buddywser.inspect_page()
-        except buddywserError as e:
+            return await self.browser.inspect_page()
+        except BrowserError as e:
             return {"error": str(e)}
 
     @function_tool()
     async def read_page(self, context: RunContext):
         """Read the text content of the current website."""
         try:
-            return await self.buddywser.read_page()
-        except buddywserError as e:
+            return await self.browser.read_page()
+        except BrowserError as e:
             return {"error": str(e)}
 
     @function_tool()
     async def click_element(self, context: RunContext, target: str):
         """Click a visible button or link on the current website."""
         try:
-            return await self.buddywser.click(target)
-        except buddywserError as e:
+            return await self.browser.click(target)
+        except BrowserError as e:
             return {"error": str(e)}
 
     @function_tool()
@@ -698,8 +762,8 @@ class Assistant(Agent):
     ):
         """Enter text into a website's input field."""
         try:
-            return await self.buddywser.type_text(target, text)
-        except buddywserError as e:
+            return await self.browser.type_text(target, text)
+        except BrowserError as e:
             return {"error": str(e)}
 
     @function_tool()
@@ -713,17 +777,105 @@ class Assistant(Agent):
             if direction not in ("up", "down"):
                 return {"error": "Direction must be up or down."}
 
-            return await self.buddywser.scroll(direction)
-        except buddywserError as e:
+            return await self.browser.scroll(direction)
+        except BrowserError as e:
             return {"error": str(e)}
 
     @function_tool()
     async def go_back(self, context: RunContext):
         """Navigate to the previous buddywser page."""
         try:
-            return await self.buddywser.go_back()
-        except buddywserError as e:
+            return await self.browser.go_back()
+        except BrowserError as e:
             return {"error": str(e)}
+
+    # ── Online / offline awareness ──────────────────────────────────────────
+    @function_tool()
+    async def check_connection(self, context: RunContext):
+        """Report whether the computer is currently online or offline.
+
+        Call this when the network state is unknown and a task depends on the
+        internet, or when the user asks whether there is an internet connection.
+        """
+        online = await asyncio.to_thread(pc.is_online)
+        return {"online": online, "status": "online" if online else "offline"}
+
+    # ── Online: internet search ─────────────────────────────────────────────
+    @function_tool()
+    async def search_internet(self, context: RunContext, query: str):
+        """Search the internet and return the top results.
+
+        Use this for general lookups, facts, news, weather and anything that
+        needs current information from the web. Only works while online; when
+        the computer is offline, use the local PC tools instead.
+
+        Args:
+            query: What to search for, for example "current weather in Chennai".
+        """
+        if not await asyncio.to_thread(pc.is_online):
+            return {"online": False, "error": "There is no internet connection right now."}
+        try:
+            return await asyncio.to_thread(_search_internet_sync, query)
+        except Exception as exc:
+            logger.warning("Internet search failed for %r: %s", query, exc)
+            return {"online": True, "error": f"The search failed: {exc}"}
+
+    # ── Offline: local PC control ───────────────────────────────────────────
+    @function_tool()
+    async def list_drives(self, context: RunContext):
+        """List the computer's drives together with their free and total space."""
+        return {"drives": await asyncio.to_thread(pc.list_drives)}
+
+    @function_tool()
+    async def find_local_files(self, context: RunContext, query: str, file_type: str = ""):
+        """Search this computer's drives for saved files by name.
+
+        Use this to find downloaded movies, music, documents and similar files,
+        for example "the matrix" or "interstellar". Works offline.
+
+        Args:
+            query: Words that appear in the file name, for example "interstellar".
+            file_type: Optional filter: movie, music, image or document.
+        """
+        result = await asyncio.to_thread(pc.find_files, query, file_type=file_type or None)
+        result["online"] = await asyncio.to_thread(pc.is_online)
+        return result
+
+    @function_tool()
+    async def open_local_file(self, context: RunContext, path: str):
+        """Open a file or folder on this computer with its default application.
+
+        Use the full path returned by find_local_files so the right file opens.
+        Works offline.
+
+        Args:
+            path: The full path of the file or folder to open.
+        """
+        return await asyncio.to_thread(pc.open_path, path)
+
+    @function_tool()
+    async def set_wifi(self, context: RunContext, enabled: bool):
+        """Turn the Wi-Fi adapter on or off.
+
+        Requires administrator permission. If it fails, tell the user the action
+        needs to be run as administrator instead of pretending it worked.
+
+        Args:
+            enabled: True to turn Wi-Fi on, False to turn it off.
+        """
+        return await pc.set_wifi(enabled)
+
+    @function_tool()
+    async def set_bluetooth(self, context: RunContext, enabled: bool):
+        """Turn Bluetooth on or off.
+
+        Requires administrator permission. If it fails, tell the user the action
+        needs to be run as administrator instead of pretending it worked.
+
+        Args:
+            enabled: True to turn Bluetooth on, False to turn it off.
+        """
+        return await pc.set_bluetooth(enabled)
 
 server = AgentServer()
 
@@ -756,7 +908,8 @@ async def my_agent(ctx: JobContext):
     assistant = Assistant()
 
     # Close buddywser when agent shuts down
-    ctx.add_shutdown_callback(assistant.buddywser.close)
+    ctx.add_shutdown_callback(assistant.browser.close)
+
 
     # Connect agent to LiveKit room
     await ctx.connect()
