@@ -1,91 +1,119 @@
-<img src="./.github/assets/app-icon.png" alt="Voice assistant app icon" width="100" height="100">
+<img src="./.github/assets/app-icon.png" alt="Jarvis app icon" width="100" height="100">
 
-# Flutter Agent Starter
+# Jarvis
 
-This starter app template for [LiveKit Agents](https://docs.livekit.io/agents/overview/) provides a simple voice interface using the [LiveKit Flutter SDK](https://github.com/livekit/client-sdk-flutter). It supports [voice](https://docs.livekit.io/agents/start/voice-ai/), [transcriptions](https://docs.livekit.io/agents/build/text/), [live video input](https://docs.livekit.io/agents/build/vision/#video), and [virtual avatars](https://docs.livekit.io/agents/integrations/avatar/).
+Jarvis is a personal AI assistant with a voice-first HUD. It runs on LiveKit
+Agents: a Python agent does the thinking and tool calling, and the Flutter app
+is the client you talk to on Android, iOS, web, macOS and Windows.
 
-This template is compatible with iOS, macOS, Android, and web. It is free for you to use or modify as you see fit.
+There is also a browser frontend in [`../frontend`](../frontend) that serves the
+same HUD on the web.
 
-<img src="./.github/assets/screenshot.png" alt="Voice Assistant Screenshot" height="500">
+## Features
 
-## Getting started
+- **Voice, text and video.** Talk to Jarvis, type to it, or share the camera so
+  it can see what you show it.
+- **One assistant experience.** Jarvis reconnects in the background and keeps
+  local device actions available on the same screen when the cloud agent cannot
+  be reached. The current local handler supports flashlight, volume, media,
+  apps, websites, time and date; open-ended AI answers still need the cloud.
+- **Device actions.** The agent can call tools that are executed on the phone:
+  opening apps, playing local media, sending WhatsApp messages, torch, volume,
+  and opening Settings.
+- **No terminal needed.** Once the agent is deployed to LiveKit Cloud, the app
+  connects on its own from PC or phone.
 
+## Configure the app
 
-This will create a new Flutter project in the current directory. Install dependencies and run the app:
+The app gets short-lived room tokens from the hosted Next.js endpoint. Pass its
+public HTTPS URL and the deployed agent name at build or run time:
+
+```bash
+flutter run \
+  --dart-define=LIVEKIT_TOKEN_ENDPOINT=https://<your-host>/api/token \
+  --dart-define=LIVEKIT_AGENT_NAME=my-agent
+```
+
+Configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `AGENT_NAME`,
+and `ALLOW_PUBLIC_TOKEN=true` on the host as described in the
+[web frontend guide](../frontend/README.md). Keep the API secret on the server;
+the Flutter app only contains the public endpoint URL. The agent name must match
+the deployed agent's dispatch name.
+
+## Run it
+
 ```bash
 flutter pub get
 flutter run
 ```
 
-Note: You may need to configure signing certificates in Xcode if building to a real iOS device.
+To run against a local agent, see the [agent README](../README.md) and start it
+with `lk agent dev`.
 
-The app is configured to connect to the LiveKit homepage agent by default, which you can also try at [livekit.com](https://www.livekit.com). To point the app at your own agent (see [Connect to your agent](#connect-to-your-agent)).
+## Local use without a connection
 
-> [!NOTE]
-> To setup without the LiveKit CLI, clone the repository and then either create the `assets/.env` file manually from a copy of `.env.example`. The env file is optional: without any configuration, the app connects to a default agent — the same one featured on the [LiveKit homepage](https://livekit.io) — so you can try it out right away.
+The app keeps the same HUD on screen and retries the cloud connection in the
+background. The built-in local actions are matched by
+[`lib/support/offline_commands.dart`](lib/support/offline_commands.dart) and the
+device speech is handled by [`lib/support/offline_voice.dart`](lib/support/offline_voice.dart):
 
-## Connect to your agent
+- **Android** uses `SpeechRecognizer` with `EXTRA_PREFER_OFFLINE` and the system
+  `TextToSpeech` engine, through the existing `jarvis/device` channel. No extra
+  packages are added.
+- **Every platform** can type an offline command. Offline speech and native
+  device actions are currently available on Android.
+- Say or type `help` to hear the local actions available on this device.
 
-To switch from the default agent to your own, you first need a LiveKit agent to speak with. For a no-code setup, use the [Agent Builder](https://docs.livekit.io/agents/start/builder/). For more customization, try our starter agent for [Python](https://github.com/livekit-examples/agent-starter-python), [Node.js](https://github.com/livekit-examples/agent-starter-node), or [create your own from scratch](https://docs.livekit.io/agents/start/voice-ai/).
+The current app does not include an on-device language model, so it cannot hold
+an open-ended AI conversation with the internet disconnected. It can still hear
+and speak supported local actions without switching to a separate screen.
 
-Second, you need a token server. For development, the easiest option is the [sandbox token server](https://docs.livekit.io/frontends/authentication/tokens/sandbox-token-server/): enable it from your project's **Options** on the [Settings](https://cloud.livekit.io/projects/p_/settings/project) page in LiveKit Cloud and copy the `sandboxId`.
+For reliable offline recognition, install the offline speech language for your
+locale in Android Settings. The app opens Settings for you if the engine reports
+it is missing.
 
-Then fill the `LIVEKIT_SANDBOX_ID` in your `assets/.env`:
+## Small release builds
 
-```swift
-LIVEKIT_SANDBOX_ID=<your-sandbox-id>
+Release builds enable R8 minification and resource shrinking. Build split APKs
+so each phone downloads only the ABI it needs:
+
+```bash
+flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols \
+  --dart-define=LIVEKIT_TOKEN_ENDPOINT=https://<your-host>/api/token \
+  --dart-define=LIVEKIT_AGENT_NAME=my-agent
 ```
 
-or modify `lib/controllers/app_ctrl.dart` to replace the `SandboxTokenSource` with your own token source implementation (development-only hardcoded credentials are also supported there).
+Keep the `build/symbols` folder: it is required to read stack traces from an
+obfuscated build. The ProGuard keep rules live in
+`android/app/proguard-rules.pro`; they protect Flutter, WebRTC and the plugins
+that are reached through reflection.
 
-## Feature overview
+## App icon
 
-This starter app supports several features of the agents framework and is intended as a base you can adapt for your own use case.
+The launcher icon and every generated size come from one master image:
 
-### Text, video, and voice input
+```bash
+python tool/generate_brand_assets.py
+```
 
-This app supports:
+It writes the Android mipmaps, iOS/macOS icon sets, web/PWA icons, the Windows
+`.ico`, the Next.js icon, the README artwork, and `assets/jarvis_logo.png` used
+on the welcome screen. To change the branding, replace the master image path at
+the top of the script, or overwrite `assets/jarvis_logo.png` and re-run it.
 
-- **Voice**: send microphone audio to your agent. **Requires microphone permissions.**
-- **Text**: send text input using the message bar.
-- **Video**: optionally share camera and/or screen share tracks to the room so your agent can process visual input (requires an agent/model that supports it).
+## Testing
 
-Related docs:
+```bash
+flutter test
+flutter analyze
+```
 
-- Voice agents: https://docs.livekit.io/agents/start/voice-ai/
-- Text: https://docs.livekit.io/agents/build/text/
-- Vision/video: https://docs.livekit.io/agents/build/vision/#video
-- Screen share: https://docs.livekit.io/home/client/tracks/screenshare/
+`test/offline_commands_test.dart` covers the offline matcher, and
+`test/widget_test.dart` covers the HUD widgets without starting a LiveKit
+session.
 
-If you have trouble with screen sharing, refer to the docs linked above for more setup instructions.
+## Notes
 
-### Session
-
-The app is built around two core concepts:
-
-- `livekit_client.Session`: connects to LiveKit, dispatches/observes the agent, and provides a message history via `session.messages` as well as helpers like `session.sendText(...)`.
-- `livekit_components.RoomContext` / `MediaDeviceContext`: manages local media tracks (microphone, camera, screen share) and their lifecycle.
-
-### Preconnect audio buffer
-
-This app enables `preConnectAudio` by default to capture and buffer audio before the room connection completes. This allows the connection to appear "instant" from the user's perspective and makes the app more responsive.
-
-To disable this feature, set `preConnectAudio` to `false` in `SessionOptions` when creating the `Session` (see `lib/controllers/app_ctrl.dart`).
-
-### Virtual avatar / agent video
-
-If your agent publishes a video track (for example via a [virtual avatar](https://docs.livekit.io/agents/integrations/avatar/) integration), the app renders the agent's video when available and falls back to an audio visualizer otherwise.
-
-## Token generation in production
-
-In a production environment, you will be responsible for developing a solution to [generate tokens for your users](https://docs.livekit.io/home/server/generating-tokens/) that integrates with your authentication system.
-
-You should replace the `SandboxTokenSource` in `lib/controllers/app_ctrl.dart` with an `EndpointTokenSource` or your own `TokenSourceFixed` / `TokenSourceConfigurable` implementation. You can also use `.cached()` to cache valid tokens and avoid unnecessary token requests.
-
-## Running on Simulator / Emulator
-
-To use this template with video (or screen sharing) input, you may need to run the app on a physical device depending on platform and simulator/emulator capabilities. Testing on Simulator/Emulator will still support voice and text modes.
-
-## Contributing
-
-This template is open source and we welcome contributions! Please open a PR or issue through GitHub, and don't forget to join us in the [LiveKit Community Slack](https://livekit.io/join-slack)!
+- Video and screen share may need a physical device rather than an emulator.
+- iOS builds need signing certificates configured in Xcode.
+- The app is dark-only by design; both theme slots point at the same HUD palette.

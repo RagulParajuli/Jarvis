@@ -58,7 +58,7 @@ class VoiceAssistantApp extends StatelessWidget {
         child: components.SessionContext(
           session: appCtrl.session,
           child: MaterialApp(
-            title: 'JARVIS',
+            title: 'Jarvis',
             theme: buildTheme(),
             darkTheme: buildTheme(),
             themeMode: ThemeMode.dark,

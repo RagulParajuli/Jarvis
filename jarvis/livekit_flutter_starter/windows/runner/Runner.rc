@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.livekit.example" "\0"
-            VALUE "FileDescription", "livekit_flutter_starter" "\0"
+            VALUE "CompanyName", "Jarvis" "\0"
+            VALUE "FileDescription", "Jarvis - Personal AI Assistant" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "livekit_flutter_starter" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.livekit.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "livekit_flutter_starter.exe" "\0"
-            VALUE "ProductName", "livekit_flutter_starter" "\0"
+            VALUE "InternalName", "jarvis" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Jarvis. All rights reserved." "\0"
+            VALUE "OriginalFilename", "jarvis.exe" "\0"
+            VALUE "ProductName", "Jarvis" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

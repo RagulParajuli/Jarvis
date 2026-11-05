@@ -1,11 +1,11 @@
 {
-    "name": "voice_assistant",
-    "short_name": "voice_assistant",
+    "name": "Jarvis",
+    "short_name": "Jarvis",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "An AI voice assistant built with LiveKit",
+    "background_color": "#040a10",
+    "theme_color": "#040a10",
+    "description": "Jarvis - a personal AI voice assistant",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

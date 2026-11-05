@@ -32,6 +32,7 @@ class WelcomeScreen extends StatefulWidget {
 
 class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProviderStateMixin {
   late final AnimationController _spin;
+  final _accessCodeController = TextEditingController();
   Timer? _bootTimer;
   int _visibleLines = 0;
   bool _ready = false;
@@ -56,6 +57,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
   void dispose() {
     _bootTimer?.cancel();
     _spin.dispose();
+    _accessCodeController.dispose();
     super.dispose();
   }
 
@@ -64,8 +66,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
         builder: (ctx, appCtrl, session, _) {
           final isConnecting = appCtrl.isSessionStarting || session.connectionState != sdk.ConnectionState.disconnected;
 
-          return HudGridBackground(
-            child: LayoutBuilder(
+          return Material(
+            color: Colors.transparent,
+            child: HudGridBackground(
+              child: LayoutBuilder(
               builder: (ctx, constraints) {
                 // Phone-height windows need a smaller ring and tighter spacing;
                 // the decoration strip only fits when there is room for it.
@@ -97,6 +101,34 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                               glow: _ready,
                               color: _ready ? HudColors.cyan : HudColors.textDim,
                             ),
+                            const SizedBox(height: 16),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 420),
+                              child: TextField(
+                                controller: _accessCodeController,
+                                obscureText: true,
+                                autocorrect: false,
+                                enableSuggestions: false,
+                                textInputAction: TextInputAction.go,
+                                onSubmitted: (_) => _activate(appCtrl),
+                                onChanged: appCtrl.setAccessCode,
+                                decoration: const InputDecoration(
+                                  labelText: 'Access code (optional)',
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                            ),
+                            if (appCtrl.accessCodeError != null) ...[
+                              const SizedBox(height: 8),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 420),
+                                child: Text(
+                                  appCtrl.accessCodeError!,
+                                  textAlign: TextAlign.center,
+                                  style: HudText.monoSmall.copyWith(color: HudColors.red),
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 20),
                             HudButton(
                               label: !_ready
@@ -104,8 +136,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                                   : isConnecting
                                       ? 'Connecting'
                                       : 'Activate Jarvis',
-                              filled: _ready && !isConnecting,
-                              onPressed: _ready && !isConnecting ? appCtrl.connect : null,
+                              filled: _ready && !isConnecting && _accessCodeController.text.isNotEmpty,
+                              onPressed: _ready && !isConnecting && _accessCodeController.text.isNotEmpty
+                                  ? () => _activate(appCtrl)
+                                  : null,
                             ),
                           ],
                         ),
@@ -126,15 +160,20 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                   ],
                 );
               },
+              ),
             ),
           );
         },
       );
 
+  void _activate(ctrl.AppCtrl appCtrl) {
+    if (_accessCodeController.text.isEmpty) return;
+    appCtrl.activateWithAccessCode(_accessCodeController.text);
+  }
+
   Widget _buildRing(double outer) {
     final mid = outer * 0.73;
     final inner = outer * 0.5;
-    final showSubtitle = outer >= 180;
 
     return SizedBox(
       width: outer,
@@ -164,18 +203,16 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
               ),
             ),
           ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'JARVIS',
-                style: HudText.glow.copyWith(
-                  fontSize: outer * 0.14,
-                  letterSpacing: outer * 0.048,
-                ),
-              ),
-              if (showSubtitle) const HudLabel('Personal AI System'),
-            ],
+          // The brand mark from the launcher icon, so the app opens on the same
+          // face the user tapped.
+          ClipOval(
+            child: Image.asset(
+              'assets/jarvis_logo.png',
+              width: outer * 0.86,
+              height: outer * 0.86,
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.medium,
+            ),
           ),
         ],
       ),

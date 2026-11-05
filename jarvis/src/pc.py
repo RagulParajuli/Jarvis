@@ -31,18 +31,53 @@ from pathlib import Path
 # --- File-type classification -------------------------------------------------
 
 MOVIE_EXTENSIONS = {
-    ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v",
-    ".mpg", ".mpeg", ".ts", ".3gp", ".vob",
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".m4v",
+    ".mpg",
+    ".mpeg",
+    ".ts",
+    ".3gp",
+    ".vob",
 }
 MUSIC_EXTENSIONS = {
-    ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".aiff",
+    ".mp3",
+    ".wav",
+    ".flac",
+    ".m4a",
+    ".aac",
+    ".ogg",
+    ".opus",
+    ".wma",
+    ".aiff",
 }
 IMAGE_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".tiff",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".svg",
+    ".tiff",
 }
 DOCUMENT_EXTENSIONS = {
-    ".pdf", ".doc", ".docx", ".txt", ".rtf", ".ppt", ".pptx",
-    ".xls", ".xlsx", ".csv", ".md",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".txt",
+    ".rtf",
+    ".ppt",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+    ".csv",
+    ".md",
 }
 
 _FILE_TYPE_GROUPS = {
@@ -60,10 +95,24 @@ _FILE_TYPE_GROUPS = {
 
 # Directories that are never worth scanning and can be very large.
 _SKIP_DIR_NAMES = {
-    "windows", "$recycle.bin", "system volume information", "recovery",
-    "program files", "program files (x86)", "programdata", "appdata",
-    "node_modules", ".git", "__pycache__", ".venv", "venv", ".next",
-    "$windows.~bt", "$windows.~ws", "perflogs", "config.msi",
+    "windows",
+    "$recycle.bin",
+    "system volume information",
+    "recovery",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "appdata",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".next",
+    "$windows.~bt",
+    "$windows.~ws",
+    "perflogs",
+    "config.msi",
 }
 
 # --- Connectivity -------------------------------------------------------------
@@ -85,6 +134,20 @@ def is_online(*, timeout: float = 2.0) -> bool:
 
 def list_drives() -> list[dict[str, object]]:
     """Return the mounted drives with their total and free space in GB."""
+    if sys.platform != "win32":
+        # The agent may also run in the cloud, where there are no drive letters.
+        try:
+            usage = shutil.disk_usage("/")
+        except OSError:
+            return []
+        return [
+            {
+                "drive": "/",
+                "total_gb": round(usage.total / 1e9, 1),
+                "free_gb": round(usage.free / 1e9, 1),
+            }
+        ]
+
     drives: list[dict[str, object]] = []
     for letter in string.ascii_uppercase:
         root = f"{letter}:\\"
@@ -128,7 +191,10 @@ def find_files(
     deadline = time.monotonic() + max(time_budget, 1.0)
 
     if roots is None:
-        roots = [str(drive["drive"]) for drive in list_drives()]
+        if sys.platform == "win32":
+            roots = [str(drive["drive"]) for drive in list_drives()]
+        else:
+            roots = [str(Path.home())]
 
     matches: list[dict[str, str]] = []
     scanned = 0
@@ -225,7 +291,18 @@ def is_admin() -> bool:
         return False
 
 
-def _run_powershell(script: str, *, timeout: float = 25.0) -> subprocess.CompletedProcess:
+def _run_powershell(
+    script: str, *, timeout: float = 25.0
+) -> subprocess.CompletedProcess:
+    if sys.platform != "win32":
+        # Cloud deployments run on Linux; report that instead of crashing.
+        return subprocess.CompletedProcess(
+            args=["powershell"],
+            returncode=1,
+            stdout="",
+            stderr="Wi-Fi and Bluetooth cannot be switched from this platform.",
+        )
+
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],

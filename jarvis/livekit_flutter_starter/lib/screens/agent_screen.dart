@@ -65,7 +65,7 @@ class _AgentScreenState extends State<AgentScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          const HudLabel('NEURAL LINK ACTIVE'),
+                          const HudLabel('JARVIS READY'),
                           if (!narrow) const HudLabel('ARC REACTOR: STABLE'),
                         ],
                       ),
@@ -90,17 +90,16 @@ class _AgentScreenState extends State<AgentScreen> {
         ),
       );
 
-  Widget _buildVisualizer(BuildContext ctx, double size) => Consumer<sdk.Session>(
-        builder: (ctx, session, _) {
-          final status = _status(session);
+  Widget _buildVisualizer(BuildContext ctx, double size) => Consumer2<AppCtrl, sdk.Session>(
+        builder: (ctx, appCtrl, session, _) {
+          final usingLocalAssistant = appCtrl.isOffline && !appCtrl.isConnected;
+          final status = usingLocalAssistant ? _localStatus(appCtrl) : _status(session);
+          final heard = appCtrl.offlineTranscript.trim();
+
           return Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              HudLabel(
-                status.text,
-                color: status.color,
-                glow: status.glow,
-              ),
+                      HudLabel(status.text, color: status.color, glow: status.glow),
               const SizedBox(height: 24),
               Stack(
                 alignment: Alignment.center,
@@ -121,7 +120,19 @@ class _AgentScreenState extends State<AgentScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
+              if (heard.isNotEmpty)
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: size + 80),
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      '"$heard"',
+                      textAlign: TextAlign.center,
+                      style: HudText.monoSmall.copyWith(color: HudColors.text),
+                    ),
+                  ),
+                ),
               Text(
                 'JARVIS',
                 style: HudText.glow.copyWith(fontSize: 18, letterSpacing: 7.2),
@@ -138,7 +149,8 @@ class _AgentScreenState extends State<AgentScreen> {
   Widget _buildCameraPreview(BuildContext ctx, double width) => components.MediaDeviceContextBuilder(
         builder: (ctx, roomCtx, deviceCtx) {
           final publications = roomCtx.localParticipant?.videoTrackPublications;
-          final track = publications == null || publications.isEmpty ? null : publications.first.track;
+          final track = roomCtx.localVideoTrack ??
+              (publications == null || publications.isEmpty ? null : publications.first.track);
 
           if (!deviceCtx.cameraOpened || track == null) return const SizedBox.shrink();
 
@@ -162,7 +174,7 @@ class _AgentScreenState extends State<AgentScreen> {
                     Container(width: 6, height: 6, color: HudColors.red),
                     const SizedBox(width: 6),
                     HudLabel(
-                      'CAM LIVE - ${rear ? 'REAR' : 'FRONT'}',
+                      '${roomCtx.connected ? 'CAM LIVE' : 'CAMERA PREVIEW'} - ${rear ? 'REAR' : 'FRONT'}',
                       color: HudColors.cyan,
                     ),
                   ],
@@ -217,64 +229,106 @@ class _AgentScreenState extends State<AgentScreen> {
         ),
       );
 
-  Widget _buildControlBar(BuildContext ctx) => Column(
-        children: [
-          Consumer<AppCtrl>(
-            builder: (ctx, appCtrl, _) => appCtrl.isAudioBlocked
-                ? const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: HudLabel(
-                      'TAP ANYWHERE TO ENABLE AUDIO',
-                      color: HudColors.amber,
-                      glow: true,
+  Widget _buildControlBar(BuildContext ctx) => Consumer<AppCtrl>(
+        builder: (ctx, appCtrl, _) {
+          final useLocalInput = appCtrl.isOffline && !appCtrl.isSessionStarting && !appCtrl.isConnected;
+
+          return Column(
+            children: [
+              Consumer<AppCtrl>(
+                builder: (ctx, appCtrl, _) => appCtrl.isAudioBlocked && appCtrl.isConnected
+                    ? const Padding(
+                        padding: EdgeInsets.only(bottom: 8),
+                        child: HudLabel(
+                          'TAP ANYWHERE TO ENABLE AUDIO',
+                          color: HudColors.amber,
+                          glow: true,
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              Container(height: 1, color: HudColors.border),
+              const SizedBox(height: 8),
+              components.MediaDeviceContextBuilder(
+                builder: (ctx, roomCtx, deviceCtx) {
+                  final microphoneEnabled = useLocalInput
+                      ? appCtrl.isLocalListeningRequested
+                      : deviceCtx.microphoneOpened;
+                  return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  spacing: 8,
+                  children: [
+                    Tooltip(
+                      message: appCtrl.isSessionStarting
+                          ? 'Connecting'
+                          : useLocalInput
+                              ? (appCtrl.isLocalListeningRequested ? 'Stop listening' : 'Start listening')
+                              : microphoneEnabled
+                                  ? 'Mute microphone'
+                                  : 'Turn microphone on',
+                      child: HudIconButton(
+                        icon: microphoneEnabled ? Icons.mic : Icons.mic_off,
+                        active: microphoneEnabled,
+                        onPressed: appCtrl.isSessionStarting
+                            ? null
+                            : () {
+                                if (useLocalInput) {
+                                  unawaited(appCtrl.toggleOfflineListening());
+                                } else {
+                                    unawaited(appCtrl.toggleRoomMicrophone());
+                                }
+                              },
+                      ),
                     ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-          Container(height: 1, color: HudColors.border),
-          const SizedBox(height: 8),
-          components.MediaDeviceContextBuilder(
-            builder: (ctx, roomCtx, deviceCtx) => Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              spacing: 8,
-              children: [
-                HudIconButton(
-                  icon: deviceCtx.microphoneOpened ? Icons.mic : Icons.mic_off,
-                  active: deviceCtx.microphoneOpened,
-                  onPressed: () =>
-                      deviceCtx.microphoneOpened ? deviceCtx.disableMicrophone() : deviceCtx.enableMicrophone(),
-                ),
-                HudIconButton(
-                  icon: deviceCtx.cameraOpened ? Icons.videocam : Icons.videocam_off,
-                  active: deviceCtx.cameraOpened,
-                  onPressed: () => deviceCtx.cameraOpened ? deviceCtx.disableCamera() : deviceCtx.enableCamera(),
-                ),
-                // Only offered once there is a camera track to flip, and the icon
-                // shows which lens is live so the button doubles as an indicator.
-                if (deviceCtx.cameraOpened)
-                  HudIconButton(
-                    icon: deviceCtx.currentPosition == sdk.CameraPosition.back
-                        ? Icons.video_camera_back
-                        : Icons.video_camera_front,
-                    active: true,
-                    onPressed: () => deviceCtx.toggleCameraPosition(),
-                  ),
-                HudIconButton(
-                  icon: Icons.subject,
-                  active: _showTranscript,
-                  onPressed: () => setState(() => _showTranscript = !_showTranscript),
-                ),
-                HudIconButton(
-                  icon: Icons.call_end,
-                  color: HudColors.red,
-                  onPressed: () => unawaited(ctx.read<AppCtrl>().disconnect()),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
+                    Tooltip(
+                      message: deviceCtx.cameraOpened ? 'Turn camera off' : 'Show camera preview',
+                      child: HudIconButton(
+                        icon: deviceCtx.cameraOpened ? Icons.videocam : Icons.videocam_off,
+                        active: deviceCtx.cameraOpened,
+                        onPressed: () =>
+                            deviceCtx.cameraOpened ? deviceCtx.disableCamera() : deviceCtx.enableCamera(),
+                      ),
+                    ),
+                    if (deviceCtx.cameraOpened && appCtrl.isConnected)
+                      HudIconButton(
+                        icon: deviceCtx.currentPosition == sdk.CameraPosition.back
+                            ? Icons.video_camera_back
+                            : Icons.video_camera_front,
+                        active: true,
+                        onPressed: () => deviceCtx.toggleCameraPosition(),
+                      ),
+                    HudIconButton(
+                      icon: Icons.subject,
+                      active: _showTranscript,
+                      onPressed: () => setState(() => _showTranscript = !_showTranscript),
+                    ),
+                    HudIconButton(
+                      icon: Icons.call_end,
+                      color: HudColors.red,
+                      onPressed: () => unawaited(ctx.read<AppCtrl>().disconnect()),
+                    ),
+                  ],
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+          );
+        },
       );
+
+  /// Same ready state while the phone handles the current turn locally.
+  ({String text, Color color, bool glow}) _localStatus(AppCtrl appCtrl) {
+    if (appCtrl.isOfflineListening) {
+      return (text: 'Listening...', color: HudColors.cyan, glow: true);
+    }
+
+    return (
+      text: 'Ready when you are',
+      color: HudColors.cyan,
+      glow: false,
+    );
+  }
 
   /// Mirrors the frontend's status label above the visualizer.
   ({String text, Color color, bool glow}) _status(sdk.Session session) {

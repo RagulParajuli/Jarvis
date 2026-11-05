@@ -1,10 +1,14 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 
 interface WelcomeViewProps {
   startButtonText: string;
   onStartCall: () => void;
+  accessCode: string;
+  onAccessCodeChange: (value: string) => void;
+  connectionError: string;
 }
 
 const BOOT_LINES = [
@@ -22,6 +26,9 @@ const BOOT_LINES = [
 export const WelcomeView = ({
   startButtonText,
   onStartCall,
+  accessCode,
+  onAccessCodeChange,
+  connectionError,
   ref,
 }: React.ComponentProps<'div'> & WelcomeViewProps) => {
   const [visibleLines, setVisibleLines] = useState<number>(0);
@@ -43,7 +50,7 @@ export const WelcomeView = ({
   return (
     <div
       ref={ref}
-      className="hud-boot fixed inset-0 flex flex-col items-center justify-center hud-grid-bg"
+      className="hud-boot hud-grid-bg fixed inset-0 flex flex-col items-center justify-center"
     >
       {/* Central ring decoration */}
       <div className="relative mb-10 flex items-center justify-center">
@@ -66,36 +73,29 @@ export const WelcomeView = ({
             animation: 'spin 3s linear infinite',
           }}
         />
-        {/* JARVIS text */}
-        <div className="flex flex-col items-center">
-          <span
-            className="hud-glow font-mono text-4xl font-bold tracking-[0.35em]"
-            style={{ letterSpacing: '0.35em' }}
-          >
-            JARVIS
-          </span>
-          <span className="hud-label mt-1 opacity-60">PERSONAL AI SYSTEM</span>
-        </div>
+        {/* JARVIS brand mark */}
+        <Image
+          src="/jarvis-logo.png"
+          alt="Jarvis"
+          width={156}
+          height={156}
+          priority
+          className="relative rounded-full"
+        />
       </div>
 
       {/* Boot log terminal */}
-      <div
-        className="hud-panel mb-10 w-full max-w-md px-6 py-4"
-        style={{ minHeight: 170 }}
-      >
-        <p className="hud-label mb-3 border-b border-[var(--hud-border)] pb-2">
-          SYSTEM BOOT LOG
-        </p>
+      <div className="hud-panel mb-10 w-full max-w-md px-6 py-4" style={{ minHeight: 170 }}>
+        <p className="hud-label mb-3 border-b border-[var(--hud-border)] pb-2">SYSTEM BOOT LOG</p>
         <div className="space-y-1">
           {BOOT_LINES.slice(0, visibleLines).map((line, i) => (
             <p
               key={i}
               className="font-mono text-xs"
               style={{
-                color:
-                  line.startsWith('>')
-                    ? 'var(--hud-cyan)'
-                    : line.includes('READY') || line.includes('ACTIVE') || line.includes('nominal')
+                color: line.startsWith('>')
+                  ? 'var(--hud-cyan)'
+                  : line.includes('READY') || line.includes('ACTIVE') || line.includes('nominal')
                     ? 'var(--hud-cyan)'
                     : 'var(--hud-text-dim)',
               }}
@@ -123,10 +123,30 @@ export const WelcomeView = ({
         {ready ? 'SAY "JARVIS" TO ACTIVATE — NO BUTTON NEEDED' : 'INITIALIZING...'}
       </p>
 
+      <label className="mb-3 flex w-full max-w-md flex-col gap-2 font-mono text-xs tracking-widest uppercase">
+        <span className="hud-label">Private access code</span>
+        <input
+          type="password"
+          autoComplete="current-password"
+          value={accessCode}
+          onChange={(event) => onAccessCodeChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && accessCode.trim()) onStartCall();
+          }}
+          aria-label="Private access code"
+          className="border border-[var(--hud-border)] bg-[var(--hud-surface)] px-4 py-3 font-mono text-sm tracking-normal text-[var(--hud-text)] normal-case outline-none focus:border-[var(--hud-cyan)]"
+        />
+      </label>
+      {connectionError && (
+        <p role="alert" className="mb-3 max-w-md text-center font-mono text-xs text-red-400">
+          {connectionError}
+        </p>
+      )}
+
       {/* Manual fallback in case the browser blocks the automatic connection */}
       <button
         onClick={onStartCall}
-        disabled={!ready}
+        disabled={!ready || !accessCode.trim()}
         className="relative overflow-hidden border border-[var(--hud-cyan)] px-12 py-3 font-mono text-xs font-bold tracking-[0.3em] uppercase transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-30"
         style={{
           color: ready ? 'var(--hud-bg)' : 'var(--hud-cyan)',
@@ -140,12 +160,10 @@ export const WelcomeView = ({
       </button>
 
       {/* Bottom coordinates decoration */}
-      <div className="absolute bottom-6 left-6 hud-label opacity-40">
+      <div className="hud-label absolute bottom-6 left-6 opacity-40">
         LAT 13.0827° N &nbsp;|&nbsp; LON 80.2707° E
       </div>
-      <div className="absolute bottom-6 right-6 hud-label opacity-40">
-        SYS STATUS: NOMINAL
-      </div>
+      <div className="hud-label absolute right-6 bottom-6 opacity-40">SYS STATUS: NOMINAL</div>
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }

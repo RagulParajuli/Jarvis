@@ -1,6 +1,9 @@
 import asyncio
+import json
 import logging
+import sys
 import textwrap
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -43,8 +46,10 @@ def _search_internet_sync(query: str, *, max_results: int = 6) -> dict[str, obje
 class Assistant(Agent):
     def __init__(self) -> None:
         self.browser = BrowserManager(
-            headless=False,
-            timeout_ms=8000
+            # Cloud workers have no display, so the browser stays headless there.
+            # On Windows it opens visibly for the person at the PC.
+            headless=sys.platform != "win32",
+            timeout_ms=8000,
         )
 
         super().__init__(
@@ -62,7 +67,7 @@ class Assistant(Agent):
             # Replace the llm argument with the model's LiveKit Inference ID:
             #    llm="openai/gpt-live-1",
             instructions=textwrap.dedent(
-            """
+                """
             # JARVIS - PERSONAL AI ASSISTANT
 
                 You are Jarvis, an intelligent, reliable, witty, and capable personal AI assistant inspired by the sophisticated technology and personality of Jarvis from Iron Man.
@@ -615,7 +620,19 @@ class Assistant(Agent):
                 - Toggling Wi-Fi or Bluetooth needs administrator rights. If the tool reports that it failed, tell the user plainly that it needs administrator permission and never pretend the toggle worked.
                 - When several files match, confirm with the user which one he means before opening it if the choice is genuinely unclear.
 
-                ## D. Honesty About Results
+                ## D. The Device the User Is Speaking From
+
+                You run on his computer, but he often talks to you from his phone. Anything that belongs to that device — its apps, its music, its torch — must happen there, so use these tools and they send the work to it.
+
+                - Use open_app when he names an app, for example "open youtube" or "open spotify". Use open_website when he names a site.
+                - Use play_media to play a downloaded song or video, for example "play some music" or "play Interstellar".
+                - Use find_local_files to search for saved files. It looks on the device he is speaking from first and on the computer second.
+                - Use control_device for volume, the flashlight and media playback, for example "volume up", "turn on the torch" or "next song".
+                - Use send_whatsapp to write a WhatsApp message. WhatsApp has no silent send, so tell him it is ready and he only has to tap send. Never say it was delivered.
+                - Wi-Fi and Bluetooth cannot be switched by an app on modern Android. Say that plainly and point him at Settings instead of pretending it worked.
+                - When he is speaking from the computer itself, the same requests are carried out there where possible; when they cannot be, say which device they need.
+
+                ## E. Honesty About Results
 
                 - Never claim an action was completed unless the tool confirmed success.
                 - If a tool returns an error, explain it once, casually, and suggest a practical alternative.
@@ -679,11 +696,15 @@ class Assistant(Agent):
             text_results = page_data.get("text", "").strip()
             if text_results:
                 source_used = "Brave Search"
-                logging.info(f"Brave Search for '{query}': fetched {len(text_results)} chars")
+                logging.info(
+                    f"Brave Search for '{query}': fetched {len(text_results)} chars"
+                )
             else:
                 raise ValueError("Brave Search returned empty content")
         except Exception as e:
-            logging.warning(f"Brave Search failed for '{query}': {e} — falling back to DuckDuckGo")
+            logging.warning(
+                f"Brave Search failed for '{query}': {e} — falling back to DuckDuckGo"
+            )
 
         # --- Fall back to DuckDuckGo if Brave failed or returned nothing ---
         if not text_results:
@@ -696,7 +717,9 @@ class Assistant(Agent):
                     # Last resort: use DuckDuckGo's text API directly
                     text_results = DuckDuckGoSearchRun().run(tool_input=query)
                 source_used = "DuckDuckGo"
-                logging.info(f"DuckDuckGo fallback for '{query}': fetched {len(text_results)} chars")
+                logging.info(
+                    f"DuckDuckGo fallback for '{query}': fetched {len(text_results)} chars"
+                )
             except Exception as e:
                 logging.error(f"DuckDuckGo fallback also failed for '{query}': {e}")
                 text_results = f"Both Brave Search and DuckDuckGo were unavailable: {e}"
@@ -707,6 +730,81 @@ class Assistant(Agent):
             "source": source_used,
             "buddywser": buddywser_result,
         }
+
+    # ── Device routing ──────────────────────────────────────────────────────
+    # Every tool below can run either on the computer hosting this agent or on
+    # the device the user is speaking from. These helpers pick the right one,
+    # using the platform and capabilities the client published in its token.
+
+    def _linked_client(self, context: RunContext):
+        """The participant the user is speaking through, plus its room.
+
+        Returns ``(None, None)`` when there is no room yet, and ``(None, room)``
+        when the room exists but nobody is linked to this session.
+        """
+        try:
+            io = context.session.room_io
+        except RuntimeError:
+            return None, None
+
+        return io.linked_participant, io.room
+
+    def _client_capabilities(self, context: RunContext) -> set[str]:
+        """Capabilities the speaking device advertised, for example ``open_app``."""
+        linked, _ = self._linked_client(context)
+        if linked is None or not linked.metadata:
+            return set()
+
+        try:
+            metadata = json.loads(linked.metadata)
+        except (TypeError, ValueError):
+            return set()
+
+        if not isinstance(metadata, dict):
+            return set()
+
+        capabilities = metadata.get("capabilities")
+        return set(capabilities) if isinstance(capabilities, list) else set()
+
+    async def _call_client(
+        self,
+        context: RunContext,
+        capability: str,
+        method: str,
+        payload: dict[str, object],
+    ) -> dict[str, object] | None:
+        """Ask the speaking device to run ``method``.
+
+        Returns the client's decoded reply, or None when the device cannot do
+        it: nobody is linked, the capability was never advertised, or the RPC
+        failed. Callers read None as "run this on the computer instead".
+        """
+        if capability not in self._client_capabilities(context):
+            return None
+
+        linked, room = self._linked_client(context)
+        if linked is None or room is None:
+            return None
+
+        try:
+            raw = await room.local_participant.perform_rpc(
+                destination_identity=linked.identity,
+                method=method,
+                payload=json.dumps(payload),
+                response_timeout=8.0,
+            )
+        except Exception as exc:
+            logger.info(
+                "Client %s could not handle %s: %s", linked.identity, method, exc
+            )
+            return None
+
+        try:
+            decoded = json.loads(raw) if raw else {}
+        except ValueError:
+            return None
+
+        return decoded if isinstance(decoded, dict) else None
 
     async def _open_on_client(self, context: RunContext, url: str) -> bool:
         """Ask the device the user is speaking from to open ``url`` itself.
@@ -719,27 +817,8 @@ class Assistant(Agent):
         Returns True only when the client acknowledged the request; callers fall
         back to the local browser otherwise.
         """
-        try:
-            io = context.session.room_io
-        except RuntimeError:
-            return False
-
-        linked = io.linked_participant
-        if linked is None:
-            return False
-
-        try:
-            await io.room.local_participant.perform_rpc(
-                destination_identity=linked.identity,
-                method="open_url",
-                payload=url,
-                response_timeout=5.0,
-            )
-        except Exception as exc:
-            logger.info("Client %s could not open %s: %s", linked.identity, url, exc)
-            return False
-
-        return True
+        reply = await self._call_client(context, "open_url", "open_url", {"url": url})
+        return bool(reply and reply.get("success"))
 
     @function_tool()
     async def open_website(self, context: RunContext, url: str):
@@ -798,12 +877,7 @@ class Assistant(Agent):
             return {"error": str(e)}
 
     @function_tool()
-    async def type_text(
-        self,
-        context: RunContext,
-        target: str,
-        text: str
-    ):
+    async def type_text(self, context: RunContext, target: str, text: str):
         """Enter text into a website's input field."""
         try:
             return await self.browser.type_text(target, text)
@@ -811,11 +885,7 @@ class Assistant(Agent):
             return {"error": str(e)}
 
     @function_tool()
-    async def scroll_page(
-        self,
-        context: RunContext,
-        direction: str
-    ):
+    async def scroll_page(self, context: RunContext, direction: str):
         """Scroll the current webpage up or down."""
         try:
             if direction not in ("up", "down"):
@@ -857,7 +927,10 @@ class Assistant(Agent):
             query: What to search for, for example "current weather in Chennai".
         """
         if not await asyncio.to_thread(pc.is_online):
-            return {"online": False, "error": "There is no internet connection right now."}
+            return {
+                "online": False,
+                "error": "There is no internet connection right now.",
+            }
         try:
             return await asyncio.to_thread(_search_internet_sync, query)
         except Exception as exc:
@@ -871,8 +944,10 @@ class Assistant(Agent):
         return {"drives": await asyncio.to_thread(pc.list_drives)}
 
     @function_tool()
-    async def find_local_files(self, context: RunContext, query: str, file_type: str = ""):
-        """Search this computer's drives for saved files by name.
+    async def find_local_files(
+        self, context: RunContext, query: str, file_type: str = ""
+    ):
+        """Search saved files by name, on whichever device the user is speaking from.
 
         Use this to find downloaded movies, music, documents and similar files,
         for example "the matrix" or "interstellar". Works offline.
@@ -881,7 +956,21 @@ class Assistant(Agent):
             query: Words that appear in the file name, for example "interstellar".
             file_type: Optional filter: movie, music, image or document.
         """
-        result = await asyncio.to_thread(pc.find_files, query, file_type=file_type or None)
+        # A phone keeps its own downloads, so ask it first; only fall through to
+        # this computer when the client cannot search (the web build, or a
+        # device that never advertised the capability).
+        reply = await self._call_client(
+            context,
+            "find_local_files",
+            "find_local_files",
+            {"query": query, "kind": file_type},
+        )
+        if reply is not None:
+            return reply
+
+        result = await asyncio.to_thread(
+            pc.find_files, query, file_type=file_type or None
+        )
         result["online"] = await asyncio.to_thread(pc.is_online)
         return result
 
@@ -921,14 +1010,144 @@ class Assistant(Agent):
         """
         return await pc.set_bluetooth(enabled)
 
+    # ── The speaking device's own apps and hardware ─────────────────────────
+    # These prefer the device the user is talking through, so a request made on
+    # a phone happens on the phone. When that device cannot do it — the web
+    # frontend, or a computer — the action is emulated locally instead.
+
+    @function_tool()
+    async def open_app(self, context: RunContext, app: str):
+        """Open an installed app on the device the user is speaking from.
+
+        Use this for "open youtube", "launch spotify" and similar requests made
+        from a phone. It is not for websites; use open_website for those.
+
+        Args:
+            app: The app's name, for example "youtube" or "spotify".
+        """
+        app = app.strip()
+
+        reply = await self._call_client(context, "open_app", "open_app", {"app": app})
+        if reply is not None:
+            return reply
+
+        # On the computer there is no phone app to launch, so the matching
+        # website stands in for it.
+        slug = "".join(character for character in app.lower() if character.isalnum())
+        if not slug:
+            return {"success": False, "error": f"I couldn't find an app called {app}."}
+
+        try:
+            result = await self.browser.open_url(f"https://www.{slug}.com")
+            return {
+                "success": True,
+                "message": f"Opened {app} in the browser.",
+                **result,
+            }
+        except BrowserError as error:
+            return {"success": False, "error": str(error)}
+
+    @function_tool()
+    async def play_media(self, context: RunContext, query: str, kind: str = "music"):
+        """Play a downloaded song or video on the device the user is speaking from.
+
+        Use this for "play some music", "play the song Believer" or "play
+        Interstellar". The file is searched for and played on that device.
+
+        Args:
+            query: What to play, for example "Believer" or "some music".
+            kind: "music" for songs, "video" for movies and clips.
+        """
+        reply = await self._call_client(
+            context, "play_media", "play_media", {"query": query, "kind": kind}
+        )
+        if reply is not None:
+            return reply
+
+        # On the computer, find a matching file on disk and hand it to the
+        # default player.
+        found = await asyncio.to_thread(pc.find_files, query, file_type=kind)
+        matches = found.get("matches") or []
+        if not matches:
+            return {
+                "success": False,
+                "error": f"I couldn't find anything called {query} on this computer.",
+            }
+
+        opened = await asyncio.to_thread(pc.open_path, matches[0]["path"])
+        return {**opened, "title": matches[0]["name"], "path": matches[0]["path"]}
+
+    @function_tool()
+    async def send_whatsapp(self, context: RunContext, contact: str, message: str):
+        """Write a WhatsApp message to a contact on the device the user is speaking from.
+
+        Use this for "send a WhatsApp to mum saying I'll be late". WhatsApp offers
+        no way to send silently, so the message is prepared and the user makes the
+        final tap. Say that when confirming, and never claim it was sent.
+
+        Args:
+            contact: The contact's name as saved on the device, for example "mum".
+            message: The text of the message to write out.
+        """
+        reply = await self._call_client(
+            context,
+            "send_whatsapp",
+            "send_whatsapp",
+            {"contact": contact, "message": message},
+        )
+        if reply is not None:
+            return reply
+
+        # On the computer, WhatsApp Web can still be opened with the text ready.
+        try:
+            result = await self.browser.open_url(
+                f"https://wa.me/?text={quote(message)}"
+            )
+            return {
+                "success": True,
+                "message": f"WhatsApp is open with the message for {contact}; the user still has to send it.",
+                **result,
+            }
+        except BrowserError as error:
+            return {"success": False, "error": str(error)}
+
+    @function_tool()
+    async def control_device(self, context: RunContext, feature: str, value: str = ""):
+        """Change a hardware setting on the device the user is speaking from.
+
+        Use this for "volume up", "mute", "set the volume to 40", "turn on the
+        flashlight", "next song" and "pause the music". These work on a phone or
+        tablet. Wi-Fi and Bluetooth cannot be switched by an app on modern
+        Android, so say that plainly instead of pretending it worked.
+
+        Args:
+            feature: One of "volume", "flashlight" or "media".
+            value: For volume: "up", "down", "mute", "max" or a number like "40".
+                For flashlight: "on" or "off". For media: "play", "pause", "next",
+                "previous" or "stop".
+        """
+        reply = await self._call_client(
+            context,
+            "device_control",
+            "device_control",
+            {"feature": feature, "value": value},
+        )
+        if reply is not None:
+            return reply
+
+        return {
+            "success": False,
+            "error": (
+                f"This computer has no {feature} control over the assistant. "
+                "I can only change that on the device you are speaking from."
+            ),
+        }
+
+
 server = AgentServer()
 
 
-
-
-
 @server.rtc_session(agent_name="my-agent")
-
 async def my_agent(ctx: JobContext):
 
     # Logging setup
@@ -936,12 +1155,8 @@ async def my_agent(ctx: JobContext):
     # Add any other context you want in all log entries here
 
     ctx.log_context_fields = {
-
         "room": ctx.room.name,
-
     }
-
-
 
     # Set up session for Google Gemini realtime model.
     # Realtime models handle audio input/output natively — no separate STT,
@@ -954,7 +1169,6 @@ async def my_agent(ctx: JobContext):
     # Close buddywser when agent shuts down
     ctx.add_shutdown_callback(assistant.browser.close)
 
-
     # Connect agent to LiveKit room
     await ctx.connect()
 
@@ -965,7 +1179,6 @@ async def my_agent(ctx: JobContext):
         room_options=room_io.RoomOptions(
             # Enable video input
             video_input=True,
-
             # Configure microphone audio input
             audio_input=room_io.AudioInputOptions(
                 # Enable AI noise cancellation
@@ -976,6 +1189,6 @@ async def my_agent(ctx: JobContext):
         ),
     )
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     cli.run_app(server)

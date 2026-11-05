@@ -48,6 +48,11 @@ README.md
 CONTRIBUTING.md
 LICENSE
 
+# Client apps. Their node_modules and build directories are huge and are not
+# part of the Python agent image.
+livekit_flutter_starter/
+frontend/
+
 # Coding agent files
 .claude/
 .codex/

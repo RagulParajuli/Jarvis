@@ -1,29 +1,104 @@
-<a href="https://livekit.io/">
-  <img src="./.github/assets/livekit-mark.png" alt="LiveKit logo" width="100" height="100">
-</a>
+<img src="./livekit_flutter_starter/.github/assets/app-icon.png" alt="Jarvis app icon" width="100" height="100">
 
-# LiveKit Agents starter for Python
+# Jarvis
 
-A starter project for building voice AI apps with [LiveKit Agents for Python](https://github.com/livekit/agents) and [LiveKit Cloud](https://cloud.livekit.io/).
+Jarvis is a personal AI assistant with a voice-first HUD, built on
+[LiveKit Agents for Python](https://github.com/livekit/agents) and
+[LiveKit Cloud](https://cloud.livekit.io/). The Python agent does the thinking
+and tool calling; the Flutter app in [`livekit_flutter_starter`](livekit_flutter_starter)
+and the Next.js frontend in [`frontend`](frontend) are the clients.
 
-The starter includes:
+The project includes:
 
-- A simple [voice AI assistant](https://docs.livekit.io/agents/start/voice-ai/) to extend and customize.
-- A voice pipeline built on [LiveKit Inference](https://docs.livekit.io/agents/models/inference/), which gives you access to [models](https://docs.livekit.io/agents/models/) from top labs with no extra configuration:
-  - The default LLM is Gemma 4 31B, an open-weight model [hosted by LiveKit](https://docs.livekit.io/agents/models/llm/livekit/) and tuned for voice AI.
-  - The default TTS is [Fish Audio S2.1 Pro](https://docs.livekit.io/agents/models/tts/fishaudio/), an expressive and cost-effective voice.
-  - More than 50 other models are available from OpenAI, Cartesia, Deepgram, and other providers.
-  - [Realtime models](https://docs.livekit.io/agents/models/realtime/) such as OpenAI GPT-Live. Many other models are available through the [plugin ecosystem](https://docs.livekit.io/agents/models/#plugins).
-- [Expressive mode](https://docs.livekit.io/agents/models/tts/expressive/), on by default, so your agent's voice carries emotion and pacing that fit the conversation.
-- [Keyterms](https://docs.livekit.io/agents/models/stt/keyterms/), on by default, so speech recognition gets your names, brands, and jargon right, including names it picks up during the conversation, like a caller's.
-- [LiveKit Turn Detector](https://docs.livekit.io/agents/logic/turns/turn-detector/), which knows when the user has finished speaking, in 14 languages.
-- [Adaptive interruption handling](https://docs.livekit.io/agents/logic/turns/adaptive-interruption-handling/), which tells a real interruption from an "uh-huh" or background noise, so your agent doesn't stop talking when it shouldn't.
-- [Background voice cancellation](https://docs.livekit.io/transport/media/noise-cancellation/).
+- A [voice AI assistant](https://docs.livekit.io/agents/start/voice-ai/) with
+  tools for the local PC, the web, and the device the app runs on.
+- A speech-to-speech pipeline on Gemini 3.1 Flash Live through the Google
+  plugin (`google.beta.realtime.RealtimeModel` in `src/agent.py`), so there are
+  no separate STT and TTS stages.
+- [Background voice cancellation](https://docs.livekit.io/transport/media/noise-cancellation/)
+  through AI Coustics, and the [LiveKit turn detector](https://docs.livekit.io/agents/logic/turns/turn-detector/).
+  Other models can be swapped in from the [model catalog](https://docs.livekit.io/agents/models/).
+- **One assistant interface.** The clients connect to the cloud agent when
+  possible and keep local device actions available when it is unreachable.
+- **PC and phone access without a terminal.** Deploy the agent to LiveKit Cloud
+  once, and the app connects on its own from any device.
 - Session transcripts, traces, and recordings from LiveKit [Agent Observability](https://docs.livekit.io/testing/observability/).
 - [Simulations](https://docs.livekit.io/testing/simulations/) that test full conversations with your agent, run in CI on every merge to `main`.
 - A `Dockerfile` for [deploying to LiveKit Cloud](https://docs.livekit.io/deploy/agents/).
 
-The starter works with any [custom web or mobile frontend](https://docs.livekit.io/frontends/) or with [telephony](https://docs.livekit.io/telephony/).
+## Project layout
+
+| Path | What it is |
+|------|------------|
+| `src/` | The Python agent: instructions, tools, and the entry point in `src/agent.py` |
+| `livekit_flutter_starter/` | The Flutter client for Android, iOS, web, macOS, and Windows |
+| `frontend/` | The Next.js web client |
+| `scenarios.yaml` | Simulation scenarios run in CI |
+
+## Deploying Jarvis to LiveKit Cloud
+
+Deploying means no machine needs to keep a terminal open: LiveKit Cloud runs the
+agent and the apps connect to it directly.
+
+```console
+lk cloud auth
+lk agent create --secrets "GOOGLE_API_KEY=..." --region ap-south
+```
+
+LiveKit Cloud injects `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`
+into the deployed agent, so they do not belong in the secrets. Pass only your
+model keys: `--secrets-file` with a file that contains just those keys also
+works.
+
+The dispatch name stays `my-agent`, matching `LIVEKIT_AGENT_NAME` in the
+Flutter build configuration. Check the deployment with
+`lk agent status` and follow it with `lk agent logs`.
+
+For terminal-free access, host the Next.js app from `frontend` with its LiveKit
+credentials and dispatch name configured. Build the Flutter app with
+`LIVEKIT_TOKEN_ENDPOINT=https://<your-host>/api/token` and
+`LIVEKIT_AGENT_NAME=my-agent` supplied as `--dart-define` values. Both clients
+then get short-lived room tokens from that hosted endpoint; the Flutter package
+does not contain a LiveKit API secret.
+
+> [!NOTE]
+> The cloud agent can still use tools that run on the device through RPC, but
+> PC-only tools (local drives, a visible browser window) only work when the
+> agent runs on that PC with `lk agent dev`.
+
+## Build the apps
+
+Flutter, with split APKs and obfuscation to keep the download small:
+
+```console
+cd livekit_flutter_starter
+flutter pub get
+flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
+```
+
+The Next.js web client:
+
+```console
+cd frontend
+pnpm install
+pnpm build
+```
+
+When the web client is hosted, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
+`LIVEKIT_API_SECRET`, and `AGENT_NAME` in the host's environment. The included
+token route is unauthenticated, so it also requires `ALLOW_PUBLIC_TOKEN=true`;
+add authentication before sharing the URL.
+
+Regenerate every app icon from the master artwork:
+
+```console
+cd livekit_flutter_starter
+python tool/generate_brand_assets.py
+```
+
+See the [Flutter README](livekit_flutter_starter/README.md) for the client
+configuration, offline mode, token sources, signing, and size details.
+
 
 ## Using coding agents
 
@@ -56,32 +131,19 @@ Install the [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/), version 2.
 
 Check your version with `lk --version`. To update an existing install, see [Update the CLI](https://docs.livekit.io/reference/developer-tools/livekit-cli/#updates).
 
-Then create a project from this template. The CLI clones the template and configures your environment:
+Then install the Python dependencies into a virtual environment with [uv](https://docs.astral.sh/uv/):
 
 ```console
-lk cloud auth
-lk agent init my-agent --template agent-starter-python
-```
-
-<details>
-<summary>Set up the project manually</summary>
-
-Clone the repository and install dependencies into a virtual environment with [uv](https://docs.astral.sh/uv/):
-
-```console
-git clone https://github.com/livekit-examples/agent-starter-python.git
-cd agent-starter-python
 uv sync
 ```
 
-Sign up for [LiveKit Cloud](https://cloud.livekit.io/), then copy `.env.example` to `.env.local` and fill it in. To have the CLI write your project's URL and API keys into the file instead, run:
+Copy `.env.example` to `.env.local` and fill in the model keys, then have the CLI
+write your project's URL and API keys into the same file:
 
 ```console
 lk cloud auth
 lk app env --write --destination .env.local
 ```
-
-</details>
 
 ## Run the agent
 
@@ -113,7 +175,9 @@ uv run src/agent.py start
 
 ## Frontends and telephony
 
-Pair the agent with a prebuilt frontend starter, or add telephony:
+This project already includes the Flutter client and the Next.js web client. If
+you want a different stack, pair the agent with a prebuilt frontend starter, or
+add telephony:
 
 | Platform | Link | Description |
 |----------|----------|-------------|

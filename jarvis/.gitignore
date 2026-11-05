@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+.secrets
+!.secrets.example
 .DS_Store
 __pycache__
 .idea

@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <head>
-        <title>JARVIS</title>
+        <title>Jarvis</title>
         <meta name="description" content="Just A Rather Very Intelligent System" />
       </head>
       <body className="overflow-x-hidden bg-[#06090d] font-mono">

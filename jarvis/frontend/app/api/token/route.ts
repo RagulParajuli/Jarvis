@@ -1,16 +1,17 @@
-import { NextResponse } from 'next/server';
 import {
   AccessToken,
   type AccessTokenOptions,
   RoomConfiguration,
   type VideoGrant,
 } from 'livekit-server-sdk';
+import { NextResponse } from 'next/server';
+import { timingSafeEqual } from 'node:crypto';
 
 type ConnectionDetails = {
-  serverUrl: string;
-  roomName: string;
-  participantName: string;
-  participantToken: string;
+  server_url: string;
+  room_name: string;
+  participant_name: string;
+  participant_token: string;
 };
 
 // NOTE: you are expected to define the following environment variables in `.env.local`:
@@ -22,11 +23,29 @@ const LIVEKIT_URL = process.env.LIVEKIT_URL;
 export const revalidate = 0;
 
 export async function POST(req: Request) {
-  // make an exception for the vercel preview environment
-  if (process.env.NODE_ENV !== 'development' && process.env.IS_VERCEL_PREVIEW !== 'true') {
-    throw new Error(
-      'THIS API ROUTE IS INSECURE. DO NOT USE THIS ROUTE IN PRODUCTION WITHOUT AN AUTHENTICATION LAYER.'
-    );
+  const allowPublicToken = process.env.ALLOW_PUBLIC_TOKEN === 'true';
+  if (!allowPublicToken) {
+    const expectedAccessCode = process.env.JARVIS_ACCESS_CODE;
+    if (!expectedAccessCode) {
+      return NextResponse.json(
+        { error: 'Token service is not configured. Set JARVIS_ACCESS_CODE or ALLOW_PUBLIC_TOKEN=true.' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } }
+      );
+    }
+
+    const suppliedAccessCode = req.headers.get('X-Jarvis-Access-Code');
+    const expectedBuffer = Buffer.from(expectedAccessCode);
+    const suppliedBuffer = Buffer.from(suppliedAccessCode ?? '');
+    if (
+      !suppliedAccessCode ||
+      expectedBuffer.length !== suppliedBuffer.length ||
+      !timingSafeEqual(expectedBuffer, suppliedBuffer)
+    ) {
+      return NextResponse.json(
+        { error: suppliedAccessCode ? 'Access code is incorrect.' : 'Access code is required.' },
+        { status: 401, headers: { 'Cache-Control': 'no-store' } }
+      );
+    }
   }
 
   try {
@@ -46,33 +65,49 @@ export async function POST(req: Request) {
       ? RoomConfiguration.fromJson(body.room_config, { ignoreUnknownFields: true })
       : new RoomConfiguration();
 
-    // Generate participant token
-    const participantName = 'user';
-    const participantIdentity = `voice_assistant_user_${Math.floor(Math.random() * 10_000)}`;
-    const roomName = `voice_assistant_room_${Math.floor(Math.random() * 10_000)}`;
+    const roomName =
+      typeof body?.room_name === 'string' && body.room_name.trim()
+        ? body.room_name.trim()
+        : `jarvis_${crypto.randomUUID()}`;
+    const participantName =
+      typeof body?.participant_name === 'string' && body.participant_name.trim()
+        ? body.participant_name.trim()
+        : 'user';
+    const participantIdentity =
+      typeof body?.participant_identity === 'string' && body.participant_identity.trim()
+        ? body.participant_identity.trim()
+        : `jarvis_user_${crypto.randomUUID()}`;
 
     const participantToken = await createParticipantToken(
-      { identity: participantIdentity, name: participantName },
+      {
+        identity: participantIdentity,
+        name: participantName,
+        ...(typeof body?.participant_metadata === 'string' && {
+          metadata: body.participant_metadata,
+        }),
+        ...(body?.participant_attributes && { attributes: body.participant_attributes }),
+      },
       roomName,
       roomConfig
     );
 
     // Return connection details
     const data: ConnectionDetails = {
-      serverUrl: LIVEKIT_URL,
-      roomName,
-      participantName,
-      participantToken,
+      server_url: LIVEKIT_URL,
+      room_name: roomName,
+      participant_name: participantName,
+      participant_token: participantToken,
     };
     const headers = new Headers({
       'Cache-Control': 'no-store',
     });
     return NextResponse.json(data, { headers });
   } catch (error) {
-    if (error instanceof Error) {
-      console.error(error);
-      return new NextResponse(error.message, { status: 500 });
-    }
+    console.error('Token generation failed:', error);
+    return NextResponse.json(
+      { error: 'Unable to create a LiveKit connection. Check the server configuration.' },
+      { status: 500, headers: { 'Cache-Control': 'no-store' } }
+    );
   }
 }
 

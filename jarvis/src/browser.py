@@ -169,6 +169,7 @@ class BrowserManager:
     def _find_brave(self) -> str | None:
         """Return the Brave executable path if installed, else None."""
         import os
+
         for path in self._BRAVE_PATHS:
             if os.path.isfile(path):
                 return path

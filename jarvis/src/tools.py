@@ -15,5 +15,7 @@ async def search_web(context: RunContext, query: str):
         logging.info(f"web search for query '{query}' : {result}")
         return result
     except Exception as e:
-        logging.error(f"Error occured while searching the web for query '{query}' : {e}")
+        logging.error(
+            f"Error occured while searching the web for query '{query}' : {e}"
+        )
         raise

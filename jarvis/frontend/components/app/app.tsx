@@ -1,15 +1,15 @@
 'use client';
 
+import { useMemo, useRef, useState } from 'react';
+import { TokenSource } from 'livekit-client';
+import { useSession } from '@livekit/components-react';
+import { WarningIcon } from '@phosphor-icons/react/dist/ssr';
 import { AgentSessionProvider } from '@/components/agents-ui/agent-session-provider';
 import { StartAudioButton } from '@/components/agents-ui/start-audio-button';
 import { ViewController } from '@/components/app/view-controller';
 import { Toaster } from '@/components/ui/sonner';
 import { useAgentErrors } from '@/hooks/useAgentErrors';
 import { useDebugMode } from '@/hooks/useDebug';
-import { useSession } from '@livekit/components-react';
-import { WarningIcon } from '@phosphor-icons/react/dist/ssr';
-import { TokenSource } from 'livekit-client';
-import { useMemo } from 'react';
 
 const IN_DEVELOPMENT = process.env.NODE_ENV !== 'production';
 
@@ -27,12 +27,20 @@ interface AppProps {
 }
 
 export function App({ tokenServerId, tokenEndpoint, agentName, isVideoInputSupported }: AppProps) {
+  const [accessCode, setAccessCode] = useState('');
+  const tokenHeaders = useRef<Record<string, string>>({ 'X-Jarvis-Access-Code': '' });
+  const updateAccessCode = (value: string) => {
+    tokenHeaders.current['X-Jarvis-Access-Code'] = value;
+    setAccessCode(value);
+  };
   const tokenSource = useMemo(
     () =>
       tokenServerId
         ? TokenSource.developmentTokenServer(tokenServerId)
-        : TokenSource.endpoint(tokenEndpoint),
-    [tokenServerId, tokenEndpoint],
+        : TokenSource.endpoint(tokenEndpoint, {
+            headers: tokenHeaders.current,
+          }),
+    [tokenServerId, tokenEndpoint]
   );
 
   const session = useSession(tokenSource, agentName ? { agentName } : undefined);
@@ -41,7 +49,11 @@ export function App({ tokenServerId, tokenEndpoint, agentName, isVideoInputSuppo
     <AgentSessionProvider session={session}>
       <AppSetup />
       <main className="grid h-svh grid-cols-1 place-content-center">
-        <ViewController isVideoInputSupported={isVideoInputSupported} />
+        <ViewController
+          isVideoInputSupported={isVideoInputSupported}
+          accessCode={accessCode}
+          onAccessCodeChange={updateAccessCode}
+        />
       </main>
       <StartAudioButton label="Start Audio" />
       <Toaster
@@ -50,8 +62,8 @@ export function App({ tokenServerId, tokenEndpoint, agentName, isVideoInputSuppo
         className="toaster group"
         style={
           {
-            '--normal-bg':     'var(--hud-surface)',
-            '--normal-text':   'var(--hud-text)',
+            '--normal-bg': 'var(--hud-surface)',
+            '--normal-text': 'var(--hud-text)',
             '--normal-border': 'var(--hud-border)',
           } as React.CSSProperties
         }

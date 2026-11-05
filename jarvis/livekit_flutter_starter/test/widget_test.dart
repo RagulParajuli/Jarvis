@@ -1,31 +1,45 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:voice_assistant/app.dart';
+import 'package:jarvis/ui/hud_theme.dart';
 
 void main() {
-  testWidgets('App builds successfully', (WidgetTester tester) async {
-    await dotenv.load(
-      fileName: 'assets/.env',
-      isOptional: true,
-      mergeWith: const {
-        'LIVEKIT_SANDBOX_ID': 'test',
-      },
+  testWidgets('HUD label uppercases and glows', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: HudLabel('jarvis online', glow: true)),
+      ),
     );
 
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const VoiceAssistantApp());
-    // Dispose resources started by the global controller to avoid pending timers.
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.runAsync(() async {
-      await appCtrl.cleanUp();
-    });
+    expect(find.text('JARVIS ONLINE'), findsOneWidget);
+    final label = tester.widget<Text>(find.text('JARVIS ONLINE'));
+    expect(label.style?.color, HudColors.textDim);
+    expect(label.style?.shadows, isNotNull);
+  });
+
+  testWidgets('HUD button reports taps', (WidgetTester tester) async {
+    var taps = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HudButton(label: 'connect', onPressed: () => taps++),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('CONNECT'));
+    expect(taps, 1);
+  });
+
+  testWidgets('HUD button is inert without a callback', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: HudButton(label: 'connect')),
+      ),
+    );
+
+    await tester.tap(find.text('CONNECT'));
+    final opacity = tester.widget<Opacity>(find.byType(Opacity).first);
+    expect(opacity.opacity, lessThan(1));
   });
 }
