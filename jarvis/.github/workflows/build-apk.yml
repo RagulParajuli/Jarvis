@@ -1,0 +1,38 @@
+
+name: Build Jarvis APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Jarvis code
+        uses: actions/checkout@v4
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Get dependencies
+        working-directory: livekit_flutter_starter
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: livekit_flutter_starter
+        run: flutter build apk --release
+
+      - name: Save APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-APK
+          path: livekit_flutter_starter/build/app/outputs/flutter-apk/app-release.apk
