@@ -1,6 +1,6 @@
+import localFont from 'next/font/local';
 import { cn } from '@/lib/shadcn/utils';
 import '@/styles/globals.css';
-import localFont from 'next/font/local';
 
 const commitMono = localFont({
   display: 'swap',
@@ -8,8 +8,8 @@ const commitMono = localFont({
   src: [
     { path: '../fonts/CommitMono-400-Regular.otf', weight: '400', style: 'normal' },
     { path: '../fonts/CommitMono-700-Regular.otf', weight: '700', style: 'normal' },
-    { path: '../fonts/CommitMono-400-Italic.otf',  weight: '400', style: 'italic' },
-    { path: '../fonts/CommitMono-700-Italic.otf',  weight: '700', style: 'italic' },
+    { path: '../fonts/CommitMono-400-Italic.otf', weight: '400', style: 'italic' },
+    { path: '../fonts/CommitMono-700-Italic.otf', weight: '700', style: 'italic' },
   ],
 });
 

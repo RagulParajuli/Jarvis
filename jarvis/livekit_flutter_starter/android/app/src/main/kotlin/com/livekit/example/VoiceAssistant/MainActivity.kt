@@ -25,8 +25,15 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.net.URLEncoder
+import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.PrivateKey
+import java.security.PublicKey
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 import java.util.Locale
+import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -53,6 +60,18 @@ class MainActivity : FlutterActivity() {
         const val ACCESS_CODE_KEY_ALIAS = "jarvis_access_code_key"
         const val ACCESS_CODE_PREF = "jarvis_secure_preferences"
         const val ACCESS_CODE_PREF_KEY = "encrypted_access_code"
+
+        /** Keystore alias for the device's signing key. The private key never leaves Keystore. */
+        const val DEVICE_KEY_ALIAS = "jarvis_device_key"
+
+        /** The installation id is an identifier, not a secret, so plain preferences are fine. */
+        const val DEVICE_PREF = "jarvis_device_preferences"
+        const val DEVICE_PREF_ID_KEY = "installation_id"
+        const val DEVICE_PREF_TRUSTED_KEY = "device_trusted"
+
+        val UUID_PATTERN =
+            Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+        const val HEX_DIGITS = "0123456789abcdef"
 
         /** Friendly names mapped to the package phones normally ship with. */
         val KNOWN_APPS = mapOf(
@@ -108,9 +127,32 @@ class MainActivity : FlutterActivity() {
                 "sendWhatsapp" -> sendWhatsapp(call.argument("contact"), call.argument("message"), result)
                 "deviceControl" -> deviceControl(call.argument("feature"), call.argument("value"), result)
                 "openSettings" -> openSettings(call.argument("section"), result)
+                "deviceIdentity" -> result.success(deviceIdentity())
+                "signDeviceAssertion" -> {
+                    val payload = call.argument<String>("payload")
+                    if (payload.isNullOrEmpty()) {
+                        result.error("device_signing", "Assertion payload is missing.", null)
+                    } else {
+                        try {
+                            result.success(ok("signature" to signDeviceAssertion(payload)))
+                        } catch (_: Exception) {
+                            // Generic on purpose: never echo the payload, signature or key.
+                            result.error("device_signing", "Device signing is unavailable.", null)
+                        }
+                    }
+                }
+                "isDeviceTrusted" -> result.success(ok("trusted" to isDeviceTrusted()))
+                "setDeviceTrusted" -> {
+                    setDeviceTrusted(call.argument<Boolean>("trusted") == true)
+                    result.success(ok())
+                }
                 "readSavedAccessCode" -> result.success(readSavedAccessCode())
                 "saveAccessCode" -> {
                     saveAccessCode(call.argument<String>("value").orEmpty())
+                    result.success(null)
+                }
+                "clearSavedAccessCode" -> {
+                    clearSavedAccessCode()
                     result.success(null)
                 }
                 "speechAvailable" -> result.success(
@@ -129,7 +171,10 @@ class MainActivity : FlutterActivity() {
                 else -> result.success(failure("this device cannot handle ${call.method}"))
             }
         } catch (error: Exception) {
-            if (call.method == "readSavedAccessCode" || call.method == "saveAccessCode") {
+            if (call.method == "readSavedAccessCode" ||
+                call.method == "saveAccessCode" ||
+                call.method == "clearSavedAccessCode"
+            ) {
                 result.error("secure_storage", error.message ?: error.javaClass.simpleName, null)
             } else {
                 result.success(failure(error.message ?: error.javaClass.simpleName))
@@ -512,6 +557,101 @@ class MainActivity : FlutterActivity() {
         engine.destroy()
     }
 
+    // ── Device identity ──────────────────────────────────────────────────────
+    // One random id per app installation and one non-exportable P-256 signing
+    // key in Android Keystore. Only public material is returned to Dart: the
+    // public key as base64 DER SubjectPublicKeyInfo and its SHA-256 fingerprint.
+
+    private fun deviceIdentity(): Map<String, Any?> {
+        // X.509 SubjectPublicKeyInfo is the format Node's crypto.createPublicKey
+        // accepts with { format: 'der', type: 'spki' } for ES256 verification.
+        val publicKeyDer = devicePublicKey().encoded
+            ?: throw IllegalStateException("device public key has no encoded form")
+        val digest = MessageDigest.getInstance("SHA-256").digest(publicKeyDer)
+        val fingerprint = buildString(64) {
+            for (byte in digest) {
+                val value = byte.toInt() and 0xff
+                append(HEX_DIGITS[value ushr 4])
+                append(HEX_DIGITS[value and 0x0f])
+            }
+        }
+
+        return ok(
+            "device_id" to installationId(),
+            "public_key" to Base64.encodeToString(publicKeyDer, Base64.NO_WRAP),
+            "fingerprint" to fingerprint,
+        )
+    }
+
+    /** Returns a stable id for this installation, generating it on first use. */
+    private fun installationId(): String {
+        val preferences = getSharedPreferences(DEVICE_PREF, MODE_PRIVATE)
+        val existing = preferences.getString(DEVICE_PREF_ID_KEY, null)
+        if (existing != null && UUID_PATTERN.matches(existing)) return existing
+
+        val generated = UUID.randomUUID().toString()
+        check(preferences.edit().putString(DEVICE_PREF_ID_KEY, generated).commit()) {
+            "could not persist the device identifier"
+        }
+        return generated
+    }
+
+    /**
+     * Reads the public half of the device key, creating it on first use.
+     *
+     * `generateKeyPair` stores the private key in Android Keystore with no export
+     * permitted. The self-signed certificate returned by the Keystore carries the
+     * public key, so nothing private is read, serialized or sent over the channel.
+     */
+    private fun devicePublicKey(): PublicKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        keyStore.getCertificate(DEVICE_KEY_ALIAS)?.publicKey?.let { return it }
+
+        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
+        generator.initialize(
+            KeyGenParameterSpec.Builder(
+                DEVICE_KEY_ALIAS,
+                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+            )
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .build(),
+        )
+        return generator.generateKeyPair().public
+    }
+
+    /**
+     * Signs an assertion payload with the existing device key.
+     *
+     * The private key is loaded from Android Keystore and used in place; it is
+     * never serialized or exported. Android's `SHA256withECDSA` produces the DER
+     * signature the token server verifies. A missing key is an error rather than
+     * a reason to generate one: a new key would no longer match the public key
+     * already registered with the server.
+     */
+    private fun signDeviceAssertion(payload: String): String {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val privateKey = keyStore.getKey(DEVICE_KEY_ALIAS, null) as? PrivateKey
+            ?: throw IllegalStateException("device signing key is unavailable")
+        val signer = Signature.getInstance("SHA256withECDSA")
+        signer.initSign(privateKey)
+        signer.update(payload.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(signer.sign(), Base64.NO_WRAP)
+    }
+
+    /** Reads the trusted flag written after a successful device pairing. */
+    private fun isDeviceTrusted(): Boolean =
+        getSharedPreferences(DEVICE_PREF, MODE_PRIVATE).getBoolean(DEVICE_PREF_TRUSTED_KEY, false)
+
+    /** Persists the trusted flag; a failed write throws so Dart is told. */
+    private fun setDeviceTrusted(trusted: Boolean) {
+        val saved = getSharedPreferences(DEVICE_PREF, MODE_PRIVATE)
+            .edit()
+            .putBoolean(DEVICE_PREF_TRUSTED_KEY, trusted)
+            .commit()
+        check(saved) { "could not persist the trusted-device flag" }
+    }
+
     private fun accessCodeKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (keyStore.getKey(ACCESS_CODE_KEY_ALIAS, null) as? SecretKey)?.let { return it }
@@ -560,6 +700,29 @@ class MainActivity : FlutterActivity() {
             .edit()
             .putString(ACCESS_CODE_PREF_KEY, Base64.encodeToString(payload, Base64.NO_WRAP))
             .apply()
+    }
+
+    /**
+     * Drops the saved code and the Keystore key that protects it.
+     *
+     * Called when the server rejects the code. Deleting the key as well means
+     * nothing left behind on disk can be decrypted later, and the next save
+     * simply generates a fresh key.
+     */
+    private fun clearSavedAccessCode() {
+        getSharedPreferences(ACCESS_CODE_PREF, MODE_PRIVATE)
+            .edit()
+            .remove(ACCESS_CODE_PREF_KEY)
+            .apply()
+
+        try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            if (keyStore.containsAlias(ACCESS_CODE_KEY_ALIAS)) {
+                keyStore.deleteEntry(ACCESS_CODE_KEY_ALIAS)
+            }
+        } catch (_: Exception) {
+            // The ciphertext is already gone; a leftover key protects nothing.
+        }
     }
 
     private fun recognitionErrorMessage(error: Int): String = when (error) {

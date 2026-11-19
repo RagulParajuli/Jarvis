@@ -17,6 +17,9 @@ same HUD on the web.
   local device actions available on the same screen when the cloud agent cannot
   be reached. The current local handler supports flashlight, volume, media,
   apps, websites, time and date; open-ended AI answers still need the cloud.
+- **Wake word.** Say "Jarvis" and the app authenticates and joins the room
+  without touching the screen. Detection is offline and on-device; the audio
+  never leaves the phone before the session starts.
 - **Device actions.** The agent can call tools that are executed on the phone:
   opening apps, playing local media, sending WhatsApp messages, torch, volume,
   and opening Settings.
@@ -25,30 +28,98 @@ same HUD on the web.
 
 ## Configure the app
 
-The app gets short-lived room tokens from the hosted Next.js endpoint. Pass its
-public HTTPS URL and the deployed agent name at build or run time:
+The app needs short-lived room tokens before it can join a room. One base URL in
+`lib/support/jarvis_config.dart` is the single source of truth: the token
+endpoint (`/api/token`) and the device-pairing routes (`/api/device/*`) are
+derived from it, so they always share the same backend origin. No manual URL
+entry is needed for development or normal builds.
+
+### 1. Hosted Jarvis backend (default)
+
+No build flag is required. The built-in base is
+`https://jarvis-ai-beta-teal.vercel.app`, which gives the token endpoint
+`https://jarvis-ai-beta-teal.vercel.app/api/token`. To point a build at a
+different environment, override the base once at build time:
 
 ```bash
 flutter run \
-  --dart-define=LIVEKIT_TOKEN_ENDPOINT=https://<your-host>/api/token \
+  --dart-define=JARVIS_API_BASE_URL=https://<your-host> \
   --dart-define=LIVEKIT_AGENT_NAME=my-agent
 ```
 
-Configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `AGENT_NAME`,
-and `ALLOW_PUBLIC_TOKEN=true` on the host as described in the
-[web frontend guide](../frontend/README.md). Keep the API secret on the server;
-the Flutter app only contains the public endpoint URL. The agent name must match
-the deployed agent's dispatch name.
+Pass a base origin, not a credential-bearing URL. A trailing slash or a path
+such as `/api/token` is normalized away, and the app adds `/api/token` itself.
+Never put an access code, token or secret in this value. There is deliberately
+no runtime URL setting.
+
+### 2. LiveKit Cloud's token server (development alternative)
+
+Enable the **Development token server** in your LiveKit Cloud
+[project settings](https://cloud.livekit.io/projects/p_/settings/project) and
+copy the **Token server ID**. Pass it at build or run time:
+
+```bash
+flutter run \
+  --dart-define=LIVEKIT_TOKEN_SERVER_ID=<id> \
+  --dart-define=LIVEKIT_AGENT_NAME=my-agent
+```
+
+LiveKit Cloud mints the tokens, so nothing needs to run on your computer and no
+access code is required. The ID lets anyone who has it request tokens for the
+project, so keep it out of public repositories and treat this as a development
+setup. The hosted backend above is the production auth path with device pairing.
+
+The "Jarvis" wake word needs no key and no account, so there is nothing else to
+configure.
+
+For the endpoint option, configure `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
+`LIVEKIT_API_SECRET`, `AGENT_NAME`, `JARVIS_ACCESS_CODE`, and the Upstash
+rate-limit settings on the host as described in the
+[web frontend guide](../frontend/README.md#token-generation-in-production).
+Keep the API secret on the server; the Flutter app only contains the public
+endpoint URL. The agent name must match the deployed agent's dispatch name.
+Do not set `ALLOW_PUBLIC_TOKEN=true`: it removes the access-code check and is
+never recommended, even for a private deployment.
 
 ## Run it
 
 ```bash
 flutter pub get
-flutter run
+flutter run \
+  --dart-define=LIVEKIT_TOKEN_SERVER_ID=<id> \
+  --dart-define=LIVEKIT_AGENT_NAME=my-agent
 ```
+
+There is no localhost default. On a phone, `127.0.0.1` is the phone itself and
+not your computer, so an Android build must use the token server ID or a
+deployed HTTPS endpoint. The app reports a missing token configuration instead
+of falling back to a local development server.
 
 To run against a local agent, see the [agent README](../README.md) and start it
 with `lk agent dev`.
+
+## Wake word
+
+[`lib/support/wake_word.dart`](lib/support/wake_word.dart) listens for "Jarvis"
+with a small keyword-spotting model from
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0). It is fully
+offline: no account, no key, no audio uploaded.
+
+- The int8 zipformer model and its BPE vocabulary live in `assets/kws/` (~5.5 MB)
+  and are copied to the app support directory on first launch, because the native
+  engine loads models from file paths.
+- `assets/kws/keywords.txt` holds the keyword, `▁JA R VI S`, built from the
+  model's own vocabulary, so no training step is involved.
+- On detection the app releases the microphone, then authenticates and connects.
+  When the session ends it re-arms the wake word.
+
+Wake-word listening is Android-only in v1 and runs while the app is open on
+screen. Elsewhere, and if the engine cannot start (for example the microphone
+permission is denied), the app falls back to connecting on launch.
+
+The native libraries add about 26 MB per ABI to the APK. Building for every ABI
+in one APK multiplies that, which is why the split-per-ABI command above is the
+recommended way to ship it.
 
 ## Local use without a connection
 
@@ -60,8 +131,8 @@ device speech is handled by [`lib/support/offline_voice.dart`](lib/support/offli
 - **Android** uses `SpeechRecognizer` with `EXTRA_PREFER_OFFLINE` and the system
   `TextToSpeech` engine, through the existing `jarvis/device` channel. No extra
   packages are added.
-- **Every platform** can type an offline command. Offline speech and native
-  device actions are currently available on Android.
+- **Every platform** can type an offline command. Offline speech is Android-only;
+  native device actions are implemented on Android and Windows.
 - Say or type `help` to hear the local actions available on this device.
 
 The current app does not include an on-device language model, so it cannot hold
@@ -78,10 +149,14 @@ Release builds enable R8 minification and resource shrinking. Build split APKs
 so each phone downloads only the ABI it needs:
 
 ```bash
-flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols \
-  --dart-define=LIVEKIT_TOKEN_ENDPOINT=https://<your-host>/api/token \
-  --dart-define=LIVEKIT_AGENT_NAME=my-agent
+flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
 ```
+
+The default hosted backend needs no token define. To use another environment,
+add `--dart-define=JARVIS_API_BASE_URL=https://<your-host>`; for the
+development-only LiveKit token server, add
+`--dart-define=LIVEKIT_TOKEN_SERVER_ID=<id>` instead. `--dart-define=LIVEKIT_AGENT_NAME`
+defaults to `my-agent`.
 
 Keep the `build/symbols` folder: it is required to read stack traces from an
 obfuscated build. The ProGuard keep rules live in

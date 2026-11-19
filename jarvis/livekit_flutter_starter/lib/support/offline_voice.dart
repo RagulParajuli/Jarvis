@@ -28,7 +28,7 @@ class OfflineVoice {
   bool _listening = false;
 
   /// Whether this build has the native handlers behind offline voice.
-  bool get isAvailable => DeviceBridge.isNative;
+  bool get isAvailable => DeviceBridge.hasNativeSpeech;
 
   /// True from the moment the engine is asked to listen until a result or an
   /// error ends the turn.

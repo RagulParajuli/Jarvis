@@ -17,6 +17,11 @@ KMS
 .claude/settings.local.json
 .claude/worktrees/
 
+# Supabase CLI local state (linked project ref, migration cache). Never committed.
+supabase/.temp/
+# Created by `supabase init`; machine- and CLI-version-specific. See supabase/README.md.
+supabase/config.toml
+
 # OpenAI Codex
 .codex/config.local.toml
 

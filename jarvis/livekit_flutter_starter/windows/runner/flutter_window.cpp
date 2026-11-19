@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "device_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -25,6 +26,12 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  // The `jarvis/device` channel the Dart DeviceBridge talks to. Without this,
+  // Windows advertises no device capabilities and the agent never asks it to
+  // do anything.
+  RegisterDeviceChannel(flutter_controller_->engine());
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {

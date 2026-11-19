@@ -8,11 +8,18 @@ import 'package:livekit_components/livekit_components.dart' as components;
 import 'package:logging/logging.dart';
 import 'package:uuid/uuid.dart';
 
+import '../support/access_code_store.dart';
 import '../support/background_service.dart';
+import '../support/device_auth.dart';
+import '../support/device_auth_flow.dart';
 import '../support/device_bridge.dart';
 import '../support/device_rpc.dart';
+import '../support/device_token_source.dart';
+import '../support/jarvis_config.dart';
 import '../support/offline_commands.dart';
 import '../support/offline_voice.dart';
+import '../support/reconnect_policy.dart';
+import '../support/wake_word.dart';
 
 enum AppScreenState { welcome, agent }
 
@@ -22,9 +29,25 @@ class AppCtrl extends ChangeNotifier {
   static const uuid = Uuid();
   static final _logger = Logger('AppCtrl');
   static final _connectionId = uuid.v4();
-  static const _tokenEndpoint = String.fromEnvironment('LIVEKIT_TOKEN_ENDPOINT');
+
+  /// LiveKit Cloud's development token server ID, supplied at build time with
+  /// `--dart-define=LIVEKIT_TOKEN_SERVER_ID=<id>`.
+  ///
+  /// With this set, the app asks LiveKit Cloud for room tokens directly, so a
+  /// phone reaches the deployed agent with no token server running on anyone's
+  /// computer. Anyone holding the ID can mint tokens for this project, so do not
+  /// publish it; LiveKit treats the token server as a development feature.
+  static const _tokenServerId = String.fromEnvironment('LIVEKIT_TOKEN_SERVER_ID');
+
   static const _agentName = String.fromEnvironment('LIVEKIT_AGENT_NAME', defaultValue: 'my-agent');
   static final Map<String, String> _tokenHeaders = {};
+
+  /// True when this build gets room tokens from LiveKit Cloud itself.
+  static bool get usesTokenServer => _tokenServerId.trim().isNotEmpty;
+
+  /// True when the build still gates the connection behind an access code.
+  /// LiveKit's token server needs none, so the HUD can connect straight away.
+  static bool get needsAccessCode => !usesTokenServer;
 
   // States
   AppScreenState appScreenState = AppScreenState.welcome;
@@ -39,38 +62,131 @@ class AppCtrl extends ChangeNotifier {
 
   late final sdk.Room room = sdk.Room(roomOptions: const sdk.RoomOptions(enableVisualizer: true));
   late final roomContext = components.RoomContext(room: room);
-  late final sdk.Session session = _createSession(room: room);
+  late final sdk.Session session = _createSession(room: room, tokenSource: _authTokenSource);
 
   /// Serves the RPC calls the agent makes when it wants this device to act,
   /// so a request spoken into the phone is carried out on the phone.
   late final _deviceRpc = DeviceRpc(room);
 
+  /// Owns the "verify first, then persist" ordering for the access code.
+  late final _accessCodes = AccessCodeStore(
+    verify: _verifyWithServer,
+    read: DeviceBridge.readSavedAccessCode,
+    save: DeviceBridge.saveAccessCode,
+    clear: DeviceBridge.clearSavedAccessCode,
+  );
+
+  /// Pairing and trusted-device token auth share one backend origin. Both the
+  /// base and the derived token endpoint come from [jarvisApiBaseUrl].
+  late final DeviceAuthClient _deviceClient = DeviceAuthClient(
+    baseUrl: jarvisApiBaseUrlString,
+  );
+
+  /// Decides between first-time pairing and trusted-device authentication.
+  late final DeviceAuthFlow _deviceAuth = DeviceAuthFlow(deviceClient: _deviceClient);
+
+  late final DeviceTokenSource _deviceTokenSource = DeviceTokenSource(
+    tokenEndpoint: jarvisTokenEndpoint,
+    deviceClient: _deviceClient,
+  );
+
+  /// The session holds this stable source; switching the delegate avoids
+  /// rebuilding the session, which would change connection/retry timing.
+  late final _SwitchingTokenSource _authTokenSource = _SwitchingTokenSource(
+    usesTokenServer
+        ? sdk.DevelopmentTokenSource(id: _tokenServerId.trim())
+        : sdk.EndpointTokenSource(
+            url: jarvisTokenEndpoint,
+            method: 'POST',
+            headers: _tokenHeaders,
+          ),
+  );
+
+  /// Resolves once the startup trust check has set the auth mode. Both the boot
+  /// timer and a manual connect wait for it so an unread flag cannot send a
+  /// request with the wrong credential.
+  late final Future<void> _authPrepared = _prepareAuthentication();
+
+  /// Android can register a device key; other platforms keep the code path.
+  /// The LiveKit token-server build has no access-code flow to pair from.
+  bool get _canPairDevice => devicePlatform == 'android' && !usesTokenServer;
+
+  Future<void> _prepareAuthentication() async {
+    if (usesTokenServer) return;
+    await _deviceAuth.prepare();
+    if (_deviceAuth.isTrusted) {
+      _authTokenSource.use(_deviceTokenSource);
+      // A trusted launch never carries the access code, even if one was saved.
+      _tokenHeaders.remove('X-Jarvis-Access-Code');
+    }
+    if (!_hasCleanedUp) notifyListeners();
+  }
+
   /// The device's own speech engine, used only while offline.
   late final _offlineVoice = OfflineVoice(onEvent: _handleOfflineSpeechEvent);
+
+  /// The on-device wake-word engine that turns "Jarvis" into a connection.
+  late final _wakeWord = WakeWord(onDetected: _onWakeWordDetected);
 
   /// `preConnectAudio` is off on purpose. With it on, the microphone is opened
   /// *before* the room connects, so a denied permission, a busy device or an app
   /// that is not foregrounded yet throws from `startRecording` and aborts the
   /// whole connection. Opening the mic after the join instead lets the room
   /// connect first and report microphone problems as their own error.
-  static sdk.Session _createSession({required sdk.Room room}) => sdk.Session.fromConfigurableTokenSource(
-        sdk.EndpointTokenSource(url: Uri.parse(_tokenEndpoint), headers: _tokenHeaders),
-        tokenOptions: sdk.TokenRequestOptions(
-          roomName: 'jarvis_$_connectionId',
-          participantName: 'user',
-          participantIdentity: 'jarvis_user_$_connectionId',
-          agentName: _agentName,
-          participantMetadata: jsonEncode({
-            'platform': devicePlatform,
-            'capabilities': deviceCapabilities,
-          }),
-        ),
-        options: sdk.SessionOptions(room: room, preConnectAudio: false),
-      );
+  static sdk.Session _createSession({
+    required sdk.Room room,
+    required sdk.TokenSourceConfigurable tokenSource,
+  }) {
+    // The source is chosen by the auth state at request time; see
+    // `_SwitchingTokenSource`. LiveKit's token server needs no backend at all.
+    return sdk.Session.fromConfigurableTokenSource(
+      tokenSource,
+      tokenOptions: sdk.TokenRequestOptions(
+        roomName: 'jarvis_$_connectionId',
+        participantName: 'user',
+        participantIdentity: 'jarvis_user_$_connectionId',
+        agentName: _agentName,
+        participantMetadata: jsonEncode({
+          'platform': devicePlatform,
+          'capabilities': deviceCapabilities,
+        }),
+      ),
+      options: sdk.SessionOptions(room: room, preConnectAudio: false),
+    );
+  }
 
   bool isSendButtonEnabled = false;
   bool isSessionStarting = false;
   String? accessCodeError;
+
+  /// True when tokens must come from the signed-assertion source.
+  bool get isTrustedDevice => _deviceAuth.isTrusted;
+
+  /// True while a trust check or pairing request is in flight.
+  bool get isAuthenticating => _submission.isRunning || _deviceAuth.isBusy;
+
+  /// The access-code field is for pairing only, and stays hidden until the
+  /// startup trust check has finished.
+  bool get showAccessCodeField =>
+      needsAccessCode && _deviceAuth.mode != DeviceAuthMode.checking && !_deviceAuth.isTrusted;
+
+  /// A typed, secret-free pairing/re-pairing message for the welcome screen.
+  String? get deviceAuthMessage => _deviceAuth.message;
+
+  /// Gates access-code checks so one submission cannot start a second request.
+  final _submission = AccessCodeSubmission();
+
+  /// True while a candidate code is being checked with the token server, so
+  /// the welcome screen can disable its button instead of starting twice.
+  bool get isVerifyingAccessCode => _submission.isRunning;
+
+  /// Bounds and paces automatic reconnection after a network failure.
+  final _reconnect = ReconnectPolicy();
+
+  /// Set once the server rejects the stored code. Nothing retries on its own
+  /// until the user supplies a different one.
+  bool _authRejected = false;
+
   bool _hasCleanedUp = false;
   bool _autoConnectAttempted = false;
   bool _everConnected = false;
@@ -119,6 +235,9 @@ class AppCtrl extends ChangeNotifier {
       notifyListeners();
     });
 
+    // Start the trust check now; the boot timer waits for it before deciding
+    // whether an access code is needed.
+    unawaited(_authPrepared);
     autoConnect();
   }
 
@@ -131,11 +250,26 @@ class AppCtrl extends ChangeNotifier {
 
   Timer? _reconnectTimer;
 
-  /// Keeps trying while offline so the link comes back on its own the moment
-  /// the network does, with no button to press.
+  /// Schedules the next automatic reconnect, if the budget allows one.
+  ///
+  /// Waits double after each failure and stop after [ReconnectPolicy.maxAttempts]
+  /// consecutive failures. Repeated notifications for the same drop must not
+  /// consume several attempts, so an already-pending retry wins.
+  ///
+  /// A rejected access code never gets this far: it is cleared, the timer is
+  /// cancelled, and the welcome screen asks for a new one instead.
   void _scheduleReconnect() {
-    _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 15), () {
+    if (_authRejected) return;
+    if (_reconnectTimer?.isActive ?? false) return;
+    if (isConnected || _hasCleanedUp) return;
+
+    final delay = _reconnect.takeAttempt();
+    if (delay == null) {
+      _logger.warning('Automatic reconnection gave up after ${_reconnect.attempts} attempts.');
+      return;
+    }
+
+    _reconnectTimer = Timer(delay, () {
       if (!isConnected && !_hasCleanedUp) connect();
     });
   }
@@ -189,32 +323,221 @@ class AppCtrl extends ChangeNotifier {
     }
   }
 
-  /// Hands-free start: connect on our own so the user only ever has to speak,
-  /// never tap a button. Runs once per launch, after the boot animation, and
-  /// leaves the welcome screen's button in place as a manual fallback.
+  /// Hands-free start: the user only ever has to speak, never tap a button.
+  /// Runs once per launch, after the boot animation.
+  ///
+  /// Where a wake-word engine is available this only arms the listener — the
+  /// session starts when "Jarvis" is heard. Everywhere else (web, desktop, or a
+  /// device where the on-device engine could not start) it keeps the previous
+  /// behaviour of connecting straight away, and the welcome screen's button stays
+  /// as the manual fallback.
   void autoConnect() {
     if (_autoConnectAttempted) return;
     _autoConnectAttempted = true;
 
     Timer(const Duration(milliseconds: 1600), () async {
       if (appScreenState != AppScreenState.welcome) return;
-      if (!_tokenHeaders.containsKey('X-Jarvis-Access-Code')) {
-        final savedCode = await DeviceBridge.readSavedAccessCode();
-        if (!_tokenHeaders.containsKey('X-Jarvis-Access-Code') && savedCode != null && savedCode.isNotEmpty) {
-          setAccessCode(savedCode);
+      await _authPrepared;
+      if (_hasCleanedUp || appScreenState != AppScreenState.welcome) return;
+
+      if (_deviceAuth.isTrusted) {
+        // A trusted launch has no credential to load or display.
+        _tokenHeaders.remove('X-Jarvis-Access-Code');
+      } else if (_canPairDevice) {
+        // Android uses the code only to pair. An unpaired device waits for the
+        // welcome screen instead of connecting with a saved code.
+        return;
+      } else {
+        // Platforms without a device key keep the existing saved-code flow.
+        if (needsAccessCode && !_tokenHeaders.containsKey('X-Jarvis-Access-Code')) {
+          final savedCode = await _accessCodes.restore();
+          if (!_tokenHeaders.containsKey('X-Jarvis-Access-Code') && savedCode != null && savedCode.isNotEmpty) {
+            setAccessCode(savedCode);
+          }
         }
+        if (needsAccessCode && !_tokenHeaders.containsKey('X-Jarvis-Access-Code')) return;
       }
-      if (appScreenState == AppScreenState.welcome && _tokenHeaders.containsKey('X-Jarvis-Access-Code')) connect();
+
+      if (await _wakeWord.start()) return;
+      if (appScreenState == AppScreenState.welcome && !_hasCleanedUp) connect();
     });
   }
 
-  /// Saves a code entered by the user, then starts the room connection.
+  /// Runs when the on-device engine hears "Jarvis". The room is not connected at
+  /// this point, so the saved access code is loaded (when the launch pass did not
+  /// already do it) and the normal connect path takes over from there.
+  Future<void> _onWakeWordDetected() async {
+    if (isConnected || isSessionStarting || _hasCleanedUp) return;
+    if (_canPairDevice && !_deviceAuth.isTrusted) {
+      _logger.info('Wake word heard before this device was paired.');
+      return;
+    }
+    _logger.info('Wake word detected; starting the session.');
+
+    if (needsAccessCode && !_tokenHeaders.containsKey('X-Jarvis-Access-Code')) {
+      final savedCode = await _accessCodes.restore();
+      if (savedCode != null && savedCode.isNotEmpty) setAccessCode(savedCode);
+    }
+
+    if (needsAccessCode && !_tokenHeaders.containsKey('X-Jarvis-Access-Code')) {
+      // Nothing to authenticate with, so leave the welcome screen's code field
+      // as the only way forward.
+      _logger.warning('Wake word heard, but no access code is saved.');
+      return;
+    }
+
+    connect();
+  }
+
+  /// Verifies a code with the token server, stores it only once accepted, and
+  /// then starts the session.
+  ///
+  /// A code that fails the check is never written, so a typo cannot replace
+  /// the code that already works. A rejected code is additionally never
+  /// silently retried; the reason is shown on the welcome screen and the user
+  /// can correct it there.
   Future<void> activateWithAccessCode(String value) async {
     if (value.trim().isEmpty) return;
-    final code = value;
-    setAccessCode(code);
-    await DeviceBridge.saveAccessCode(code);
-    connect();
+    // A second tap or Enter while a check is running would be a duplicate
+    // authentication request, so the first one keeps ownership of the result.
+    if (_submission.isRunning) return;
+
+    accessCodeError = null;
+    final pending = _submission.run(() => _accessCodes.approve(value));
+    notifyListeners();
+
+    final status = await pending;
+    if (status == null) return;
+
+    switch (status) {
+      case AccessCodeStatus.verified:
+        // A previously rejected build can retry now that the server accepted
+        // this code, and the retry budget starts over from a clean state.
+        _authRejected = false;
+        _reconnect.reset();
+        if (_canPairDevice) {
+          // The code's only job on Android is to obtain a device credential.
+          final paired = await _deviceAuth.pair(value);
+          if (!paired || _hasCleanedUp) {
+            notifyListeners();
+            return;
+          }
+          _authTokenSource.use(_deviceTokenSource);
+          // Never put the code on a request that carries a device assertion.
+          _tokenHeaders.remove('X-Jarvis-Access-Code');
+        } else {
+          // Platforms without a device key keep the original access-code path.
+          setAccessCode(value);
+        }
+        connect();
+      case AccessCodeStatus.rejected:
+        accessCodeError = 'That access code was rejected. Check it and try again.';
+        notifyListeners();
+      case AccessCodeStatus.unreachable:
+        accessCodeError = "I couldn't reach the assistant service to check that code. "
+            'Check your connection and try again.';
+        notifyListeners();
+    }
+  }
+
+  /// Asks the token endpoint whether [candidate] is accepted.
+  ///
+  /// The session's own token source type is reused so the URL, method and
+  /// header name cannot drift from the real connection. The minted token is
+  /// discarded here; only the HTTP status is interpreted, and the code itself
+  /// is never logged.
+  Future<AccessCodeStatus> _verifyWithServer(String candidate) async {
+    final probe = sdk.EndpointTokenSource(
+      url: jarvisTokenEndpoint,
+      method: 'POST',
+      headers: {'X-Jarvis-Access-Code': candidate},
+    );
+
+    try {
+      await probe.fetch(
+        sdk.TokenRequestOptions(
+          // No agent name: a check must not dispatch an agent or join a room.
+          roomName: 'jarvis_probe_$_connectionId',
+          participantName: 'verification',
+          participantIdentity: 'jarvis_probe_$_connectionId',
+        ),
+      );
+      return AccessCodeStatus.verified;
+    } on sdk.TokenSourceHttpException catch (error) {
+      return statusForHttpResponse(error.statusCode);
+    } catch (_) {
+      // Transport failures say nothing about the code, so it is not rejected.
+      _logger.warning('The access code check could not complete.');
+      return AccessCodeStatus.unreachable;
+    }
+  }
+
+  /// True when a failure means the server refused the access code, rather than
+  /// the network being unavailable.
+  static bool _isAuthRejection(Object? error) {
+    if (error is sdk.SessionError) return _isAuthRejection(error.cause);
+    if (error is sdk.TokenSourceHttpException) {
+      return statusForHttpResponse(error.statusCode) == AccessCodeStatus.rejected;
+    }
+    return false;
+  }
+
+  /// Forgets a rejected code, stops retrying and asks for a new one.
+  ///
+  /// Reached for HTTP 401/403 only. Retrying would produce the same answer, so
+  /// the stored credential is cleared and the welcome screen becomes the only
+  /// way forward.
+  Future<void> _handleAuthRejection() async {
+    _authRejected = true;
+    _reconnect.stop();
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+
+    _tokenHeaders.remove('X-Jarvis-Access-Code');
+    await _accessCodes.forgetRejected();
+
+    // Replace the raw SDK error with the message the welcome screen shows.
+    session.dismissError();
+
+    isOffline = false;
+    _connectionIssueShown = false;
+    _localListeningRequested = false;
+    isOfflineListening = false;
+    offlineTranscript = '';
+    accessCodeError = 'That access code was rejected. Enter it again to continue.';
+    appScreenState = AppScreenState.welcome;
+    agentScreenState = AgentScreenState.visualizer;
+
+    // Without a code the wake word would only fail again, so it stays off.
+    await _wakeWord.stop();
+
+    if (!_hasCleanedUp) notifyListeners();
+  }
+
+  /// A revoked device, missing key or rejected assertion is a verdict on the
+  /// device, not the network. Stop retrying and require an explicit re-pairing
+  /// step; the saved access code is never used as a silent fallback.
+  Future<void> _handleDeviceAuthFailure(DeviceTokenException failure) async {
+    _authRejected = true;
+    _reconnect.stop();
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _tokenHeaders.remove('X-Jarvis-Access-Code');
+
+    await _deviceAuth.reportTrustedFailure(failure);
+
+    session.dismissError();
+    isOffline = false;
+    _connectionIssueShown = false;
+    _localListeningRequested = false;
+    isOfflineListening = false;
+    offlineTranscript = '';
+    accessCodeError = null;
+    appScreenState = AppScreenState.welcome;
+    agentScreenState = AgentScreenState.visualizer;
+
+    await _wakeWord.stop();
+    if (!_hasCleanedUp) notifyListeners();
   }
 
   void setAccessCode(String value) {
@@ -227,6 +550,15 @@ class AppCtrl extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clears the message left by a rejected or unchecked code as the user
+  /// starts typing a replacement.
+  void dismissAccessCodeError() {
+    if (accessCodeError == null && _deviceAuth.message == null) return;
+    accessCodeError = null;
+    _deviceAuth.clearMessage();
+    notifyListeners();
+  }
+
   Future<void> cleanUp() async {
     if (_hasCleanedUp) return;
     _hasCleanedUp = true;
@@ -234,6 +566,7 @@ class AppCtrl extends ChangeNotifier {
     _reconnectTimer?.cancel();
     session.removeListener(_handleSessionChange);
     _deviceRpc.unregister();
+    await _wakeWord.stop();
     await _offlineVoice.stopListening();
     await _offlineVoice.stopSpeaking();
     _offlineVoice.unregister();
@@ -458,34 +791,29 @@ class AppCtrl extends ChangeNotifier {
   }
 
   void connect() async {
+    if (_authRejected) {
+      _logger.fine('Connection attempt ignored: the access code was rejected.');
+      return;
+    }
     if (isSessionStarting) {
       _logger.fine('Connection attempt ignored: session already starting.');
       return;
     }
+    await _authPrepared;
+    if (_hasCleanedUp) return;
 
-    final tokenUri = Uri.tryParse(_tokenEndpoint);
-    if (tokenUri == null ||
-        !tokenUri.hasScheme ||
-        tokenUri.host.isEmpty ||
-        !{'http', 'https'}.contains(tokenUri.scheme)) {
-      const message =
-          'Jarvis is missing its token server URL. Rebuild with '
-          '--dart-define=LIVEKIT_TOKEN_ENDPOINT=https://<your-host>/api/token. '
-          'The URL must point to the deployed frontend token endpoint.';
-      _logger.severe(message);
-      isOffline = true;
-      appScreenState = AppScreenState.agent;
-      agentScreenState = AgentScreenState.transcription;
-      _appendAgentNote(message);
-      notifyListeners();
-      return;
-    }
+    // This attempt supersedes any retry that was waiting to fire.
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
 
     _logger.info('Starting session connection…');
     isSessionStarting = true;
     notifyListeners();
 
     try {
+      // Porcupine holds the microphone while it listens, so it must let go
+      // before the session opens the same device.
+      await _wakeWord.stop();
       if (_localListeningRequested) {
         await _offlineVoice.stopListening();
         isOfflineListening = false;
@@ -494,6 +822,8 @@ class AppCtrl extends ChangeNotifier {
       if (session.connectionState == sdk.ConnectionState.connected) {
         _everConnected = true;
         _connectionIssueShown = false;
+        // A working link restores the full automatic-retry budget.
+        _reconnect.reset();
         appScreenState = AppScreenState.agent;
         isOffline = false;
         _localListeningRequested = false;
@@ -508,11 +838,25 @@ class AppCtrl extends ChangeNotifier {
         unawaited(BackgroundService.start());
         notifyListeners();
       } else if (session.error != null) {
-        _enterLocalAssistant();
+        final deviceFailure = DeviceAuthFlow.deviceFailureFrom(session.error);
+        if (deviceFailure != null && DeviceAuthFlow.isTerminalFailure(deviceFailure)) {
+          await _handleDeviceAuthFailure(deviceFailure);
+        } else if (_isAuthRejection(session.error)) {
+          await _handleAuthRejection();
+        } else {
+          _enterLocalAssistant();
+        }
       }
     } catch (error, stackTrace) {
       _logger.severe('Connection error: $error', error, stackTrace);
-      _enterLocalAssistant();
+      final deviceFailure = DeviceAuthFlow.deviceFailureFrom(error);
+      if (deviceFailure != null && DeviceAuthFlow.isTerminalFailure(deviceFailure)) {
+        await _handleDeviceAuthFailure(deviceFailure);
+      } else if (_isAuthRejection(error)) {
+        await _handleAuthRejection();
+      } else {
+        _enterLocalAssistant();
+      }
     } finally {
       if (isSessionStarting) {
         isSessionStarting = false;
@@ -543,6 +887,9 @@ class AppCtrl extends ChangeNotifier {
     isOffline = false;
     _connectionIssueShown = false;
     _localListeningRequested = false;
+    // A terminal device failure stays terminal until the device is re-paired.
+    _authRejected = _deviceAuth.mode == DeviceAuthMode.rePairRequired;
+    _reconnect.reset();
     _reconnectTimer?.cancel();
 
     await _offlineVoice.stopListening();
@@ -555,6 +902,8 @@ class AppCtrl extends ChangeNotifier {
     session.restoreMessageHistory(const []);
     appScreenState = AppScreenState.welcome;
     agentScreenState = AgentScreenState.visualizer;
+    // Hands-free again: the next "Jarvis" reopens the session.
+    unawaited(_wakeWord.start());
     notifyListeners();
   }
 
@@ -574,6 +923,11 @@ class AppCtrl extends ChangeNotifier {
     AppScreenState? nextScreen;
     switch (state) {
       case sdk.ConnectionState.connected:
+        // A working link restores the full automatic-retry budget, including
+        // one the SDK restored without going through connect().
+        _reconnect.reset();
+        nextScreen = AppScreenState.agent;
+        break;
       case sdk.ConnectionState.reconnecting:
         nextScreen = AppScreenState.agent;
         break;
@@ -600,4 +954,18 @@ class AppCtrl extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+/// Keeps the LiveKit session's token source stable while the credential mode
+/// changes. The session is created once; only the delegate swaps between the
+/// access-code endpoint, the development server and the device source.
+class _SwitchingTokenSource implements sdk.TokenSourceConfigurable {
+  _SwitchingTokenSource(this._delegate);
+
+  sdk.TokenSourceConfigurable _delegate;
+
+  void use(sdk.TokenSourceConfigurable delegate) => _delegate = delegate;
+
+  @override
+  Future<sdk.TokenSourceResponse> fetch(sdk.TokenRequestOptions options) => _delegate.fetch(options);
 }

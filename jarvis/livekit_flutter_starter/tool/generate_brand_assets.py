@@ -69,7 +69,12 @@ def _tracked_text(
 
 
 def _arc(draw, radius, start, end, width, fill) -> None:
-    box = (CANVAS / 2 - radius, CANVAS / 2 - radius, CANVAS / 2 + radius, CANVAS / 2 + radius)
+    box = (
+        CANVAS / 2 - radius,
+        CANVAS / 2 - radius,
+        CANVAS / 2 + radius,
+        CANVAS / 2 + radius,
+    )
     draw.arc(box, start=start, end=end, fill=fill, width=width)
 
 
@@ -161,7 +166,10 @@ def draw_master() -> Image.Image:
 
     # Dark centre disc.
     radius = 272 * scale
-    draw.ellipse((center - radius, center - radius, center + radius, center + radius), fill=(3, 9, 14))
+    draw.ellipse(
+        (center - radius, center - radius, center + radius, center + radius),
+        fill=(3, 9, 14),
+    )
     _arc(draw, 268 * scale, 0, 360, 2 * scale, (28, 120, 150))
     _arc(draw, 252 * scale, 0, 360, 1 * scale, (20, 80, 100))
 
@@ -170,7 +178,10 @@ def draw_master() -> Image.Image:
         angle = math.radians(degrees)
         x = center + math.cos(angle) * 334 * scale
         y = center + math.sin(angle) * 334 * scale
-        draw.ellipse((x - 5 * scale, y - 5 * scale, x + 5 * scale, y + 5 * scale), fill=(255, 214, 92))
+        draw.ellipse(
+            (x - 5 * scale, y - 5 * scale, x + 5 * scale, y + 5 * scale),
+            fill=(255, 214, 92),
+        )
 
     # Wordmark and caption.
     wordmark = _font(FONT_BOLD, 94 * SS)
@@ -178,20 +189,46 @@ def draw_master() -> Image.Image:
 
     glow = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow)
-    _tracked_text(glow_draw, center, center - 8 * scale, "J.A.R.V.I.S.", wordmark, 10 * scale, (90, 225, 255, 210))
-    _tracked_text(glow_draw, center, center + 82 * scale, "I N I T I A L I Z I N G . . .", caption, 4 * scale, (140, 220, 240, 150))
+    _tracked_text(
+        glow_draw,
+        center,
+        center - 8 * scale,
+        "J.A.R.V.I.S.",
+        wordmark,
+        10 * scale,
+        (90, 225, 255, 210),
+    )
+    _tracked_text(
+        glow_draw,
+        center,
+        center + 82 * scale,
+        "I N I T I A L I Z I N G . . .",
+        caption,
+        4 * scale,
+        (140, 220, 240, 150),
+    )
     glow = glow.filter(ImageFilter.GaussianBlur(14 * scale))
     image = Image.alpha_composite(image.convert("RGBA"), glow)
     draw = ImageDraw.Draw(image)
 
-    _tracked_text(draw, center, center - 8 * scale, "J.A.R.V.I.S.", wordmark, 10 * scale, WHITE)
-    _tracked_text(draw, center, center + 82 * scale, "I N I T I A L I Z I N G . . .", caption, 4 * scale, (176, 232, 246))
+    _tracked_text(
+        draw, center, center - 8 * scale, "J.A.R.V.I.S.", wordmark, 10 * scale, WHITE
+    )
+    _tracked_text(
+        draw,
+        center,
+        center + 82 * scale,
+        "I N I T I A L I Z I N G . . .",
+        caption,
+        4 * scale,
+        (176, 232, 246),
+    )
 
     # Fine corner brackets, like the frame around the reference image.
     bracket = ImageDraw.Draw(image)
     inset = 18 * SS
     arm = 54 * SS
-    for (x, y, dx, dy) in (
+    for x, y, dx, dy in (
         (inset, inset, 1, 1),
         (CANVAS - inset, inset, -1, 1),
         (inset, CANVAS - inset, 1, -1),
@@ -211,7 +248,9 @@ def _save(image: Image.Image, path: Path, size: int) -> None:
 def _maskable(image: Image.Image) -> Image.Image:
     # Maskable icons need breathing room inside the safe zone.
     canvas = Image.new("RGB", image.size, BG)
-    inner = image.resize((int(image.width * 0.78), int(image.height * 0.78)), Image.LANCZOS)
+    inner = image.resize(
+        (int(image.width * 0.78), int(image.height * 0.78)), Image.LANCZOS
+    )
     offset = (image.width - inner.width) // 2
     canvas.paste(inner, (offset, offset))
     return canvas
@@ -231,7 +270,18 @@ def main() -> None:
         "mipmap-xxhdpi": 144,
         "mipmap-xxxhdpi": 192,
     }.items():
-        _save(master, ROOT / "android" / "app" / "src" / "main" / "res" / folder / "ic_launcher.png", size)
+        _save(
+            master,
+            ROOT
+            / "android"
+            / "app"
+            / "src"
+            / "main"
+            / "res"
+            / folder
+            / "ic_launcher.png",
+            size,
+        )
 
     # Web / PWA.
     web_icons = ROOT / "web" / "icons"
@@ -295,7 +345,18 @@ def main() -> None:
     # Windows .ico with the usual shell sizes.
     ico = ROOT / "windows" / "runner" / "resources" / "app_icon.ico"
     ico.parent.mkdir(parents=True, exist_ok=True)
-    master.save(ico, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    master.save(
+        ico,
+        sizes=[
+            (16, 16),
+            (24, 24),
+            (32, 32),
+            (48, 48),
+            (64, 64),
+            (128, 128),
+            (256, 256),
+        ],
+    )
 
     print(f"Wrote brand assets from {SIZE}px master.")
 

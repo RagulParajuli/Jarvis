@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../controllers/app_ctrl.dart' as ctrl;
 import '../ui/hud_theme.dart';
+import '../widgets/access_code_error.dart';
 
 const _bootLines = <String>[
   'JARVIS v4.2.1 - INITIALIZING...',
@@ -64,111 +65,120 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
   @override
   Widget build(BuildContext ctx) => Consumer2<ctrl.AppCtrl, sdk.Session>(
         builder: (ctx, appCtrl, session, _) {
-          final isConnecting = appCtrl.isSessionStarting || session.connectionState != sdk.ConnectionState.disconnected;
+          final isVerifying = appCtrl.isAuthenticating;
+          final isConnecting =
+              isVerifying || appCtrl.isSessionStarting || session.connectionState != sdk.ConnectionState.disconnected;
 
           return Material(
             color: Colors.transparent,
             child: HudGridBackground(
               child: LayoutBuilder(
-              builder: (ctx, constraints) {
-                // Phone-height windows need a smaller ring and tighter spacing;
-                // the decoration strip only fits when there is room for it.
-                final compact = constraints.maxHeight < 700;
-                final ringSize = compact ? 156.0 : 200.0;
-                final gap = compact ? 20.0 : 36.0;
-                final showDecoration = constraints.maxHeight >= 560 && constraints.maxWidth >= 360;
+                builder: (ctx, constraints) {
+                  // Phone-height windows need a smaller ring and tighter spacing;
+                  // the decoration strip only fits when there is room for it.
+                  final compact = constraints.maxHeight < 700;
+                  final ringSize = compact ? 156.0 : 200.0;
+                  final gap = compact ? 20.0 : 36.0;
+                  final showDecoration = constraints.maxHeight >= 560 && constraints.maxWidth >= 360;
 
-                return Stack(
-                  children: [
-                    Center(
-                      child: SingleChildScrollView(
-                        padding: EdgeInsets.fromLTRB(24, 24, 24, showDecoration ? 72 : 24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _buildRing(ringSize),
-                            SizedBox(height: gap),
-                            ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: math.min(420, constraints.maxWidth - 48),
-                              ),
-                              child: _buildBootLog(compact: compact),
-                            ),
-                            SizedBox(height: gap * 0.8),
-                            HudLabel(
-                              _ready ? 'Say "JARVIS" to activate - no button needed' : 'Initializing...',
-                              textAlign: TextAlign.center,
-                              glow: _ready,
-                              color: _ready ? HudColors.cyan : HudColors.textDim,
-                            ),
-                            const SizedBox(height: 16),
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 420),
-                              child: TextField(
-                                controller: _accessCodeController,
-                                obscureText: true,
-                                autocorrect: false,
-                                enableSuggestions: false,
-                                textInputAction: TextInputAction.go,
-                                onSubmitted: (_) => _activate(appCtrl),
-                                onChanged: appCtrl.setAccessCode,
-                                decoration: const InputDecoration(
-                                  labelText: 'Access code (optional)',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                            ),
-                            if (appCtrl.accessCodeError != null) ...[
-                              const SizedBox(height: 8),
+                  return Stack(
+                    children: [
+                      Center(
+                        child: SingleChildScrollView(
+                          padding: EdgeInsets.fromLTRB(24, 24, 24, showDecoration ? 72 : 24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _buildRing(ringSize),
+                              SizedBox(height: gap),
                               ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 420),
-                                child: Text(
-                                  appCtrl.accessCodeError!,
-                                  textAlign: TextAlign.center,
-                                  style: HudText.monoSmall.copyWith(color: HudColors.red),
+                                constraints: BoxConstraints(
+                                  maxWidth: math.min(420, constraints.maxWidth - 48),
                                 ),
+                                child: _buildBootLog(compact: compact),
+                              ),
+                              SizedBox(height: gap * 0.8),
+                              HudLabel(
+                                _ready ? 'Say "JARVIS" to activate - no button needed' : 'Initializing...',
+                                textAlign: TextAlign.center,
+                                glow: _ready,
+                                color: _ready ? HudColors.cyan : HudColors.textDim,
+                              ),
+                              if (appCtrl.showAccessCodeField) ...[
+                                const SizedBox(height: 16),
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(maxWidth: 420),
+                                  child: TextField(
+                                    controller: _accessCodeController,
+                                    obscureText: true,
+                                    autocorrect: false,
+                                    enableSuggestions: false,
+                                    textInputAction: TextInputAction.go,
+                                    onSubmitted: (_) => _activate(appCtrl),
+                                    onChanged: (_) => appCtrl.dismissAccessCodeError(),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Access code (for device pairing)',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              AccessCodeError(
+                                message: appCtrl.accessCodeError ?? appCtrl.deviceAuthMessage,
+                              ),
+                              const SizedBox(height: 20),
+                              HudButton(
+                                label: !_ready
+                                    ? 'Initializing...'
+                                    : isVerifying
+                                        ? 'Checking code'
+                                        : isConnecting
+                                            ? 'Connecting'
+                                            : 'Activate Jarvis',
+                                filled: _ready && !isConnecting && _canActivate(appCtrl),
+                                onPressed:
+                                    _ready && !isConnecting && _canActivate(appCtrl) ? () => _activate(appCtrl) : null,
                               ),
                             ],
-                            const SizedBox(height: 20),
-                            HudButton(
-                              label: !_ready
-                                  ? 'Initializing...'
-                                  : isConnecting
-                                      ? 'Connecting'
-                                      : 'Activate Jarvis',
-                              filled: _ready && !isConnecting && _accessCodeController.text.isNotEmpty,
-                              onPressed: _ready && !isConnecting && _accessCodeController.text.isNotEmpty
-                                  ? () => _activate(appCtrl)
-                                  : null,
-                            ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                    if (showDecoration) ...[
-                      const Positioned(
-                        left: 24,
-                        bottom: 24,
-                        child: HudLabel('LAT 13.0827° N  |  LON 80.2707° E'),
-                      ),
-                      const Positioned(
-                        right: 24,
-                        bottom: 24,
-                        child: HudLabel('SYS STATUS: NOMINAL'),
-                      ),
+                      if (showDecoration) ...[
+                        const Positioned(
+                          left: 24,
+                          bottom: 24,
+                          child: HudLabel('LAT 13.0827° N  |  LON 80.2707° E'),
+                        ),
+                        const Positioned(
+                          right: 24,
+                          bottom: 24,
+                          child: HudLabel('SYS STATUS: NOMINAL'),
+                        ),
+                      ],
                     ],
-                  ],
-                );
-              },
+                  );
+                },
               ),
             ),
           );
         },
       );
 
+  /// True when the button can start a session.
+  ///
+  /// A trusted device needs no code at all. Builds using LiveKit's token server
+  /// also stay live with an empty field; other builds need the code used for
+  /// the one-time pairing.
+  bool _canActivate(ctrl.AppCtrl appCtrl) =>
+      appCtrl.isTrustedDevice || !ctrl.AppCtrl.needsAccessCode || _accessCodeController.text.isNotEmpty;
+
   void _activate(ctrl.AppCtrl appCtrl) {
-    if (_accessCodeController.text.isEmpty) return;
-    appCtrl.activateWithAccessCode(_accessCodeController.text);
+    if (_accessCodeController.text.isEmpty) {
+      if (!appCtrl.isTrustedDevice && ctrl.AppCtrl.needsAccessCode) return;
+      appCtrl.connect();
+      return;
+    }
+    unawaited(appCtrl.activateWithAccessCode(_accessCodeController.text));
   }
 
   Widget _buildRing(double outer) {

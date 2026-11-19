@@ -54,12 +54,25 @@ The dispatch name stays `my-agent`, matching `LIVEKIT_AGENT_NAME` in the
 Flutter build configuration. Check the deployment with
 `lk agent status` and follow it with `lk agent logs`.
 
-For terminal-free access, host the Next.js app from `frontend` with its LiveKit
-credentials and dispatch name configured. Build the Flutter app with
-`LIVEKIT_TOKEN_ENDPOINT=https://<your-host>/api/token` and
-`LIVEKIT_AGENT_NAME=my-agent` supplied as `--dart-define` values. Both clients
-then get short-lived room tokens from that hosted endpoint; the Flutter package
-does not contain a LiveKit API secret.
+For terminal-free access, enable LiveKit Cloud's **Development token server** and
+build the Flutter app with that ID:
+
+```console
+flutter build apk --release \
+  --dart-define=LIVEKIT_TOKEN_SERVER_ID=<id> \
+  --dart-define=LIVEKIT_AGENT_NAME=my-agent
+```
+
+Nothing then needs to run on your computer: the phone asks LiveKit Cloud for a
+token and joins the deployed agent directly. The ID can mint tokens for the
+project, so keep it private.
+
+The Flutter app uses the hosted Jarvis backend by default: its single base URL
+is `https://jarvis-ai-beta-teal.vercel.app`, from which it derives the token
+endpoint `/api/token` and the device-pairing routes. Both the token and device
+requests use that same origin. For another environment, override the base once
+with `--dart-define=JARVIS_API_BASE_URL=https://<your-host>`; no runtime entry or
+secret belongs in the app's configuration.
 
 > [!NOTE]
 > The cloud agent can still use tools that run on the device through RPC, but
@@ -76,6 +89,10 @@ flutter pub get
 flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols
 ```
 
+This uses the default hosted Jarvis backend. For a different environment, add
+`--dart-define=JARVIS_API_BASE_URL=https://<your-host>`; the app derives its
+token endpoint from that base.
+
 The Next.js web client:
 
 ```console
@@ -85,9 +102,13 @@ pnpm build
 ```
 
 When the web client is hosted, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
-`LIVEKIT_API_SECRET`, and `AGENT_NAME` in the host's environment. The included
-token route is unauthenticated, so it also requires `ALLOW_PUBLIC_TOKEN=true`;
-add authentication before sharing the URL.
+`LIVEKIT_API_SECRET`, `AGENT_NAME` and `JARVIS_ACCESS_CODE` in the host's
+environment. Also set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`
+so failed access-code attempts are limited across every server instance; without
+them the endpoint only limits within a single instance. `ALLOW_PUBLIC_TOKEN`
+must stay unset: it disables authentication and is never appropriate for a
+normal deployment. See the [frontend README](frontend/README.md#token-generation-in-production)
+for the full list.
 
 Regenerate every app icon from the master artwork:
 

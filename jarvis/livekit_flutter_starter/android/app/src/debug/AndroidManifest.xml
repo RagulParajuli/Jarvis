@@ -4,4 +4,9 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Debug builds may override the default backend base with the
+         JARVIS_API_BASE_URL build define over plain HTTP (for example
+         http://192.168.1.20:3000 while testing on a phone). The app derives
+         /api/token from that base. Release builds stay on the HTTPS default. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>
